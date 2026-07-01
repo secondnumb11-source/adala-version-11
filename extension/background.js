@@ -9,6 +9,7 @@ const DEFAULT_AUTOPILOT_STEPS = [
   { kind: "documents",  label: "الأحكام داخل القضايا", url: "https://najiz.sa/applications/lawsuit",                                 subTabs: [["الأحكام", "الاحكام"], ["القرارات"]] },
   { kind: "documents",  label: "الطلبات على القضايا", url: "https://najiz.sa/applications/lawsuit/requests" },
   { kind: "documents",  label: "الطلبات على القضايا (مسار بديل)", url: "https://najiz.sa/applications/lawsuit//requests" },
+  { kind: "lawsuit_requests", label: "الطلبات على القضايا", url: "https://najiz.sa/applications/lawsuit/requests" },
   { kind: "executions", label: "طلبات التنفيذ",      url: "https://najiz.sa/applications/iexecution" },
   { kind: "powers",     label: "الوكالات القضائية",   url: "https://najiz.sa/applications/wekalat/procurations-query" },
   { kind: "sessions",   label: "التقويم العدلي",      url: "https://najiz.sa/applications/dashboard" },
@@ -243,11 +244,48 @@ async function scrapeDetailOnTab(tabId, kind) {
   } catch (e) { console.warn("[adala] scrapeDetail failed", e); return null; }
 }
 
+// Deep-dive: click a sidebar tab by label and scrape its content
+async function clickSidebarTabAndScrape(tabId, tabLabel) {
+  await ensureContentScript(tabId);
+  await sleep(500);
+  try {
+    const [r] = await chrome.scripting.executeScript({
+      target: { tabId }, args: [tabLabel],
+      func: async (lbl) => {
+        const ADALA = window.__ADALA_NAJIZ__;
+        if (!ADALA) return null;
+        if (ADALA.clickSidebarTab) await ADALA.clickSidebarTab(lbl);
+        await new Promise(r => setTimeout(r, 1200));
+        if (ADALA.scrapeSidebarContent) return ADALA.scrapeSidebarContent(lbl);
+        return null;
+      },
+    });
+    return r?.result || null;
+  } catch (e) { console.warn("[adala] sidebar scrape failed", e); return null; }
+}
+
+// Deep-dive: scrape lawsuit requests from the requests page
+async function scrapeLawsuitRequestsOnTab(tabId) {
+  await ensureContentScript(tabId);
+  await sleep(600);
+  try {
+    const [r] = await chrome.scripting.executeScript({
+      target: { tabId },
+      func: () => {
+        const ADALA = window.__ADALA_NAJIZ__;
+        if (ADALA?.scrapeLawsuitRequests) return ADALA.scrapeLawsuitRequests();
+        return null;
+      },
+    });
+    return r?.result || null;
+  } catch (e) { console.warn("[adala] lawsuit requests scrape failed", e); return null; }
+}
+
 function countPayload(p) {
   if (!p) return 0;
   return (p.cases?.length || 0) + (p.powers?.length || 0) +
     (p.executions?.length || 0) + (p.sessions?.length || 0) +
-    (p.documents?.length || 0);
+    (p.documents?.length || 0) + (p.lawsuit_requests?.length || 0);
 }
 
 // Helper date/amount parsers used in deep-dive (Najiz fields are Arabic strings)
@@ -451,6 +489,11 @@ async function runAutopilot({ tabId, baseUrl, syncToken, steps, skipLoginCheck =
             const MAX_DETAILS = 25; // safety cap
             const linksToVisit = links.filter((l) => l.url && l.url !== "__CLICK__").slice(0, MAX_DETAILS);
 
+            const caseParties = [];
+            const caseSessions = [];
+            const caseJudgments = [];
+            const lawsuitRequests = [];
+
             for (let di = 0; di < linksToVisit.length; di++) {
               if (autopilotCancelled) break;
               const link = linksToVisit[di];
@@ -463,9 +506,132 @@ async function runAutopilot({ tabId, baseUrl, syncToken, steps, skipLoginCheck =
                 if (detail?.mapped) {
                   const obj = { ...detail.mapped, source_detail_url: detail.url, identifier: link.identifier };
                   deepItems.push(obj);
+
+                  if (step.kind === "cases") {
+                    const caseNum = String(obj.case_number || "").replace(/\s/g, "").slice(0, 200);
+
+                    const partiesData = await clickSidebarTabAndScrape(tabId, "أطراف الدعوي");
+                    if (partiesData) {
+                      const plaintiffs = (partiesData.plaintiffs || partiesData.plaintiff || []);
+                      const defendants = (partiesData.defendants || partiesData.defendant || []);
+                      for (const p of plaintiffs) {
+                        caseParties.push({
+                          case_number: caseNum,
+                          party_role: "plaintiff",
+                          name: p.name?.slice(0, 300),
+                          nationality: p.nationality?.slice(0, 200),
+                          id_type: p.id_type?.slice(0, 100),
+                          id_number: p.id_number?.slice(0, 200),
+                          capacity: p.capacity?.slice(0, 200),
+                          poa_status: p.poa_status?.slice(0, 200),
+                        });
+                      }
+                      for (const d of defendants) {
+                        caseParties.push({
+                          case_number: caseNum,
+                          party_role: "defendant",
+                          name: d.name?.slice(0, 300),
+                          nationality: d.nationality?.slice(0, 200),
+                          id_type: d.id_type?.slice(0, 100),
+                          id_number: d.id_number?.slice(0, 200),
+                          capacity: d.capacity?.slice(0, 200),
+                          poa_status: d.poa_status?.slice(0, 200),
+                        });
+                      }
+                    }
+
+                    const sessionsData = await clickSidebarTabAndScrape(tabId, "الجلسات");
+                    if (sessionsData) {
+                      const sessions = Array.isArray(sessionsData) ? sessionsData : (sessionsData.sessions || []);
+                      for (const s of sessions) {
+                        caseSessions.push({
+                          case_number: caseNum,
+                          session_status: s.status?.slice(0, 200),
+                          court_name: s.court?.slice(0, 200),
+                          circuit_number: s.circuit?.slice(0, 100),
+                          mechanism: s.mechanism?.slice(0, 200),
+                          degree: s.degree?.slice(0, 100),
+                          session_date: parseDeepDateISO(s.date),
+                          session_time: s.time?.slice(0, 50),
+                          session_details: s.details?.slice(0, 1000),
+                        });
+                      }
+                    }
+
+                    const judgmentsData = await clickSidebarTabAndScrape(tabId, "الأحكام");
+                    if (judgmentsData) {
+                      const judgments = Array.isArray(judgmentsData) ? judgmentsData : (judgmentsData.judgments || []);
+                      for (const j of judgments) {
+                        caseJudgments.push({
+                          case_number: caseNum,
+                          judgment_finality: j.finality?.slice(0, 200),
+                          deed_number: j.deed_number?.slice(0, 200),
+                          deed_date: parseDeepDateISO(j.deed_date),
+                          court: j.court?.slice(0, 200),
+                          circuit: j.circuit?.slice(0, 100),
+                          degree: j.degree?.slice(0, 100),
+                          appeal_deed_number: j.appeal_deed_number?.slice(0, 200),
+                          appeal_deed_date: parseDeepDateISO(j.appeal_deed_date),
+                          appeal_circuit: j.appeal_circuit?.slice(0, 100),
+                          judgment_details: j.details?.slice(0, 2000),
+                          judgment_document_url: j.document_url?.slice(0, 500),
+                        });
+                      }
+                    }
+                  }
+
+                  if (step.kind === "powers") {
+                    const fullPoa = await scrapeDetailOnTab(tabId, "powers_full");
+                    if (fullPoa?.mapped) {
+                      const po = fullPoa.mapped;
+                      obj.issuer_entity = po.issuer_entity?.slice(0, 300);
+                      obj.usage_method = po.usage_method?.slice(0, 300);
+                      obj.issuer_capacity = po.issuer_capacity?.slice(0, 200);
+                      obj.issuer_nationality = po.issuer_nationality?.slice(0, 200);
+                      obj.issuer_identity_type = po.issuer_identity_type?.slice(0, 100);
+                      obj.issuer_status_in_agency = po.issuer_status_in_agency?.slice(0, 200);
+                      obj.agent_capacity = po.agent_capacity?.slice(0, 200);
+                      obj.agent_nationality = po.agent_nationality?.slice(0, 200);
+                      obj.agent_identity_type = po.agent_identity_type?.slice(0, 100);
+                      obj.agent_status_in_agency = po.agent_status_in_agency?.slice(0, 200);
+                      obj.agency_clauses = po.agency_clauses?.slice(0, 2000);
+                      obj.agency_text = po.agency_text?.slice(0, 5000);
+                      obj.agency_data = po.agency_data || null;
+                    }
+                  }
                 }
               } catch (e) {
                 console.warn("[deep] detail visit failed", e);
+              }
+            }
+
+            if (step.kind === "cases") {
+              const lrData = await scrapeLawsuitRequestsOnTab(tabId);
+              if (lrData) {
+                const requests = Array.isArray(lrData) ? lrData : (lrData.requests || []);
+                for (const req of requests) {
+                  lawsuitRequests.push({
+                    case_number: req.case_number?.replace(/\s/g, "").slice(0, 200),
+                    case_date: parseDeepDateISO(req.case_date),
+                    court_name: req.court_name?.slice(0, 200),
+                    circuit_number: req.circuit_number?.slice(0, 100),
+                    case_status: req.case_status?.slice(0, 200),
+                    case_classification: req.case_classification?.slice(0, 200),
+                    case_type_detail: req.case_type?.slice(0, 200),
+                    applicant_type: req.applicant_type?.slice(0, 100),
+                    applicant_name: req.applicant_name?.slice(0, 300),
+                    request_type: req.request_type?.slice(0, 200),
+                    judgment_number: req.judgment_number?.slice(0, 200),
+                    submissions: req.submissions?.slice(0, 2000),
+                    request_reasons: req.request_reasons?.slice(0, 2000),
+                    reason_1: req.reason_1?.slice(0, 1000),
+                    reason_2: req.reason_2?.slice(0, 1000),
+                    reason_3: req.reason_3?.slice(0, 1000),
+                    reason_4: req.reason_4?.slice(0, 1000),
+                    reason_5: req.reason_5?.slice(0, 1000),
+                    reason_6: req.reason_6?.slice(0, 1000),
+                  });
+                }
               }
             }
 
@@ -485,6 +651,24 @@ async function runAutopilot({ tabId, baseUrl, syncToken, steps, skipLoginCheck =
                     opened_at: parseDeepDateISO(d.opened_at),
                     client_name: d.client_name?.slice(0, 200),
                   }));
+                dPayload.case_details = deepItems
+                  .filter((d) => d.case_number)
+                  .map((d) => ({
+                    case_number: String(d.case_number).replace(/\s/g, "").slice(0, 200),
+                    case_classification: d.case_classification?.slice(0, 200),
+                    case_type_detail: d.case_type?.slice(0, 200),
+                    case_date: parseDeepDateISO(d.case_date || d.opened_at),
+                    subject_matter: d.subject_matter?.slice(0, 2000),
+                    plaintiff_requests: d.plaintiff_requests?.slice(0, 2000),
+                    case_foundations: d.case_foundations?.slice(0, 5000),
+                    court_name: d.court?.slice(0, 200),
+                    circuit_number: d.circuit_number?.slice(0, 100),
+                    is_draft: d.is_draft ?? false,
+                  }));
+                dPayload.case_parties = caseParties;
+                dPayload.case_sessions_detail = caseSessions;
+                dPayload.case_judgments = caseJudgments;
+                dPayload.lawsuit_requests = lawsuitRequests;
               } else if (step.kind === "executions") {
                 dPayload.executions = deepItems
                   .filter((d) => d.execution_number)
@@ -508,9 +692,25 @@ async function runAutopilot({ tabId, baseUrl, syncToken, steps, skipLoginCheck =
                     issue_date: parseDeepDateISO(d.issue_date),
                     expiry_date: parseDeepDateISO(d.expiry_date),
                     scope: d.scope?.slice(0, 500),
+                    issuer_entity: d.issuer_entity?.slice(0, 300),
+                    usage_method: d.usage_method?.slice(0, 300),
+                    issuer_capacity: d.issuer_capacity?.slice(0, 200),
+                    issuer_nationality: d.issuer_nationality?.slice(0, 200),
+                    issuer_identity_type: d.issuer_identity_type?.slice(0, 100),
+                    issuer_status_in_agency: d.issuer_status_in_agency?.slice(0, 200),
+                    agent_capacity: d.agent_capacity?.slice(0, 200),
+                    agent_nationality: d.agent_nationality?.slice(0, 200),
+                    agent_identity_type: d.agent_identity_type?.slice(0, 100),
+                    agent_status_in_agency: d.agent_status_in_agency?.slice(0, 200),
+                    agency_clauses: d.agency_clauses?.slice(0, 2000),
+                    agency_text: d.agency_text?.slice(0, 5000),
+                    agency_data: d.agency_data || null,
                   }));
               }
-              const dCount = (dPayload.cases?.length || 0) + (dPayload.executions?.length || 0) + (dPayload.powers?.length || 0);
+              const dCount = (dPayload.cases?.length || 0) + (dPayload.executions?.length || 0) + (dPayload.powers?.length || 0) +
+                (dPayload.case_details?.length || 0) + (dPayload.case_parties?.length || 0) +
+                (dPayload.case_sessions_detail?.length || 0) + (dPayload.case_judgments?.length || 0) +
+                (dPayload.lawsuit_requests?.length || 0);
               if (dCount) {
                 setProgress({ message: `📤 إرسال ${dCount} تفاصيل معمقة للنظام` });
                 const dResp = await postSyncWithRetry({ baseUrl, syncToken, payload: dPayload }, (m) => setProgress({ message: m }));

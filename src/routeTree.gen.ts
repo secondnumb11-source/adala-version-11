@@ -32,6 +32,7 @@ import { Route as AuthenticatedAppNajizStatusRouteImport } from './routes/_authe
 import { Route as AuthenticatedAppNajizRouteImport } from './routes/_authenticated/app.najiz'
 import { Route as AuthenticatedAppMessagesRouteImport } from './routes/_authenticated/app.messages'
 import { Route as AuthenticatedAppLibraryRouteImport } from './routes/_authenticated/app.library'
+import { Route as AuthenticatedAppLawsuitRequestsRouteImport } from './routes/_authenticated/app.lawsuit-requests'
 import { Route as AuthenticatedAppInquiriesRouteImport } from './routes/_authenticated/app.inquiries'
 import { Route as AuthenticatedAppGovRouteImport } from './routes/_authenticated/app.gov'
 import { Route as AuthenticatedAppExecutionRouteImport } from './routes/_authenticated/app.execution'
@@ -179,6 +180,12 @@ const AuthenticatedAppLibraryRoute = AuthenticatedAppLibraryRouteImport.update({
   path: '/library',
   getParentRoute: () => AuthenticatedAppRoute,
 } as any)
+const AuthenticatedAppLawsuitRequestsRoute =
+  AuthenticatedAppLawsuitRequestsRouteImport.update({
+    id: '/lawsuit-requests',
+    path: '/lawsuit-requests',
+    getParentRoute: () => AuthenticatedAppRoute,
+  } as any)
 const AuthenticatedAppInquiriesRoute =
   AuthenticatedAppInquiriesRouteImport.update({
     id: '/inquiries',
@@ -322,6 +329,7 @@ export interface FileRoutesByFullPath {
   '/app/execution': typeof AuthenticatedAppExecutionRoute
   '/app/gov': typeof AuthenticatedAppGovRoute
   '/app/inquiries': typeof AuthenticatedAppInquiriesRoute
+  '/app/lawsuit-requests': typeof AuthenticatedAppLawsuitRequestsRoute
   '/app/library': typeof AuthenticatedAppLibraryRoute
   '/app/messages': typeof AuthenticatedAppMessagesRoute
   '/app/najiz': typeof AuthenticatedAppNajizRoute
@@ -366,6 +374,7 @@ export interface FileRoutesByTo {
   '/app/execution': typeof AuthenticatedAppExecutionRoute
   '/app/gov': typeof AuthenticatedAppGovRoute
   '/app/inquiries': typeof AuthenticatedAppInquiriesRoute
+  '/app/lawsuit-requests': typeof AuthenticatedAppLawsuitRequestsRoute
   '/app/library': typeof AuthenticatedAppLibraryRoute
   '/app/messages': typeof AuthenticatedAppMessagesRoute
   '/app/najiz': typeof AuthenticatedAppNajizRoute
@@ -414,6 +423,7 @@ export interface FileRoutesById {
   '/_authenticated/app/execution': typeof AuthenticatedAppExecutionRoute
   '/_authenticated/app/gov': typeof AuthenticatedAppGovRoute
   '/_authenticated/app/inquiries': typeof AuthenticatedAppInquiriesRoute
+  '/_authenticated/app/lawsuit-requests': typeof AuthenticatedAppLawsuitRequestsRoute
   '/_authenticated/app/library': typeof AuthenticatedAppLibraryRoute
   '/_authenticated/app/messages': typeof AuthenticatedAppMessagesRoute
   '/_authenticated/app/najiz': typeof AuthenticatedAppNajizRoute
@@ -462,6 +472,7 @@ export interface FileRouteTypes {
     | '/app/execution'
     | '/app/gov'
     | '/app/inquiries'
+    | '/app/lawsuit-requests'
     | '/app/library'
     | '/app/messages'
     | '/app/najiz'
@@ -506,6 +517,7 @@ export interface FileRouteTypes {
     | '/app/execution'
     | '/app/gov'
     | '/app/inquiries'
+    | '/app/lawsuit-requests'
     | '/app/library'
     | '/app/messages'
     | '/app/najiz'
@@ -553,6 +565,7 @@ export interface FileRouteTypes {
     | '/_authenticated/app/execution'
     | '/_authenticated/app/gov'
     | '/_authenticated/app/inquiries'
+    | '/_authenticated/app/lawsuit-requests'
     | '/_authenticated/app/library'
     | '/_authenticated/app/messages'
     | '/_authenticated/app/najiz'
@@ -755,6 +768,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AuthenticatedAppLibraryRouteImport
       parentRoute: typeof AuthenticatedAppRoute
     }
+    '/_authenticated/app/lawsuit-requests': {
+      id: '/_authenticated/app/lawsuit-requests'
+      path: '/lawsuit-requests'
+      fullPath: '/app/lawsuit-requests'
+      preLoaderRoute: typeof AuthenticatedAppLawsuitRequestsRouteImport
+      parentRoute: typeof AuthenticatedAppRoute
+    }
     '/_authenticated/app/inquiries': {
       id: '/_authenticated/app/inquiries'
       path: '/inquiries'
@@ -951,6 +971,7 @@ interface AuthenticatedAppRouteChildren {
   AuthenticatedAppExecutionRoute: typeof AuthenticatedAppExecutionRoute
   AuthenticatedAppGovRoute: typeof AuthenticatedAppGovRoute
   AuthenticatedAppInquiriesRoute: typeof AuthenticatedAppInquiriesRoute
+  AuthenticatedAppLawsuitRequestsRoute: typeof AuthenticatedAppLawsuitRequestsRoute
   AuthenticatedAppLibraryRoute: typeof AuthenticatedAppLibraryRoute
   AuthenticatedAppMessagesRoute: typeof AuthenticatedAppMessagesRoute
   AuthenticatedAppNajizRoute: typeof AuthenticatedAppNajizRoute
@@ -982,6 +1003,7 @@ const AuthenticatedAppRouteChildren: AuthenticatedAppRouteChildren = {
   AuthenticatedAppExecutionRoute: AuthenticatedAppExecutionRoute,
   AuthenticatedAppGovRoute: AuthenticatedAppGovRoute,
   AuthenticatedAppInquiriesRoute: AuthenticatedAppInquiriesRoute,
+  AuthenticatedAppLawsuitRequestsRoute: AuthenticatedAppLawsuitRequestsRoute,
   AuthenticatedAppLibraryRoute: AuthenticatedAppLibraryRoute,
   AuthenticatedAppMessagesRoute: AuthenticatedAppMessagesRoute,
   AuthenticatedAppNajizRoute: AuthenticatedAppNajizRoute,

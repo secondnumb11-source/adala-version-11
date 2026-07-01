@@ -21,6 +21,10 @@ import {
   X,
   ArrowUpRight,
   FileSignature,
+  ClipboardList,
+  Users,
+  FileCheck2,
+  Upload,
 } from "lucide-react";
 import { PageHeader } from "@/components/section-shell";
 import { CrudDialog, AddButton, type Field } from "@/components/crud-dialog";
@@ -165,6 +169,10 @@ function CasesPage() {
   const { data: clients = [] } = useList<any>("clients");
   const { data: sessions = [] } = useList<any>("sessions");
   const { data: docs = [] } = useList<any>("documents");
+  const { data: caseDetails = [] } = useList<any>("case_details");
+  const { data: caseParties = [] } = useList<any>("case_parties");
+  const { data: caseJudgments = [] } = useList<any>("case_judgments");
+  const { data: lawsuitRequests = [] } = useList<any>("lawsuit_requests");
   const upsert = useUpsert("cases");
   const del = useDelete("cases");
   const [open, setOpen] = useState(false);
@@ -214,6 +222,16 @@ function CasesPage() {
       ) ?? null;
     },
     [getCaseSessions]
+  );
+
+  const getCaseParties = useCallback(
+    (caseNumber: string) => caseParties.filter((p) => p.case_number === caseNumber),
+    [caseParties]
+  );
+
+  const getCaseJudgmentsFromTable = useCallback(
+    (caseNumber: string) => caseJudgments.filter((j) => j.case_number === caseNumber),
+    [caseJudgments]
   );
 
   const getJudgmentDocs = useCallback(
@@ -387,6 +405,10 @@ function CasesPage() {
         sessions={sessions}
         docs={docs}
         clients={clients}
+        caseDetails={caseDetails}
+        caseParties={caseParties}
+        caseJudgments={caseJudgments}
+        lawsuitRequests={lawsuitRequests}
         onEdit={startEdit}
       />
 
@@ -427,6 +449,8 @@ function CasesPage() {
               nextSession: getNextSession(c.id),
               judgmentDocs: getJudgmentDocs(c.id),
               isAppealDue: isAppealDue(c),
+              caseParties: getCaseParties(c.case_number),
+              caseJudgments: getCaseJudgmentsFromTable(c.case_number),
               onStatusChange: handleStatusChange,
               onTransfer: handleTransfer,
               onEdit: startEdit,
@@ -459,6 +483,8 @@ function renderCaseCard({
   nextSession,
   judgmentDocs,
   isAppealDue,
+  caseParties,
+  caseJudgments,
   onStatusChange,
   onTransfer,
   onEdit,
@@ -477,6 +503,8 @@ function renderCaseCard({
   nextSession: any;
   judgmentDocs: any[];
   isAppealDue: boolean;
+  caseParties: any[];
+  caseJudgments: any[];
   onStatusChange: (id: string, status: string) => void;
   onTransfer: (id: string, target: string) => void;
   onEdit: (row: any) => void;
@@ -494,6 +522,11 @@ function renderCaseCard({
         c.transferred_to ? "ring-2 ring-blue-300/50" : ""
       }`}
     >
+      {c.is_draft && (
+        <div className="bg-orange-500/90 text-white text-center py-1 text-xs font-bold">
+          صحيفة دعوي غير مكتملة
+        </div>
+      )}
       {/* ── Header: Status + Transfer controls ── */}
       <div className="flex items-center justify-between px-5 pt-4 pb-2 gap-2">
         {/* Status Dropdown */}
@@ -606,7 +639,25 @@ function renderCaseCard({
           )}
         </div>
 
-        {/* Court */}
+        {caseParties.length > 0 && (
+          <div className="space-y-1 mb-2">
+            {caseParties.filter((p) => p.party_type === "plaintiff").map((p, i) => (
+              <div key={`cp-pl-${i}`} className="flex items-center gap-2 text-sm">
+                <Users className="h-3.5 w-3.5 text-green-600 shrink-0" />
+                <span className="text-muted-foreground text-xs min-w-[55px]">مدعي:</span>
+                <span className="font-medium text-[#1f1810] truncate">{p.party_name}</span>
+              </div>
+            ))}
+            {caseParties.filter((p) => p.party_type === "defendant").map((p, i) => (
+              <div key={`cp-df-${i}`} className="flex items-center gap-2 text-sm">
+                <Users className="h-3.5 w-3.5 text-red-600 shrink-0" />
+                <span className="text-muted-foreground text-xs min-w-[55px]">مدعى عليه:</span>
+                <span className="font-medium text-[#1f1810] truncate">{p.party_name}</span>
+              </div>
+            ))}
+          </div>
+        )}
+
         {c.court && (
           <div className="flex items-center gap-2 text-sm mb-2">
             <Building2 className="h-3.5 w-3.5 text-blue-600 shrink-0" />
@@ -698,14 +749,6 @@ function renderCaseCard({
             onClick={(e) => { e.stopPropagation(); onDetail(c); }}
           >
             <Eye className="h-3 w-3" /> تفاصيل
-          </Button>
-          <Button
-            variant="ghost"
-            size="sm"
-            className="h-7 text-[11px] gap-1 flex-1"
-            onClick={(e) => { e.stopPropagation(); onEdit(c); }}
-          >
-            <FileText className="h-3 w-3" /> تعديل
           </Button>
           <Button
             variant="ghost"
@@ -884,6 +927,10 @@ function CaseDetailDialog({
   sessions,
   docs,
   clients,
+  caseDetails,
+  caseParties,
+  caseJudgments,
+  lawsuitRequests,
   onEdit,
 }: {
   caseData: any | null;
@@ -892,6 +939,10 @@ function CaseDetailDialog({
   sessions: any[];
   docs: any[];
   clients: any[];
+  caseDetails: any[];
+  caseParties: any[];
+  caseJudgments: any[];
+  lawsuitRequests: any[];
   onEdit: (row: any) => void;
 }) {
   if (!caseData) return null;
@@ -903,6 +954,10 @@ function CaseDetailDialog({
     .sort((a, b) => new Date(b.session_date).getTime() - new Date(a.session_date).getTime());
   const caseDocs = docs.filter((d) => d.case_id === c.id);
   const statusInfo = getStatusInfo(c.status);
+  const detail = caseDetails.find((d) => d.case_number === c.case_number);
+  const parties = caseParties.filter((p) => p.case_number === c.case_number);
+  const judgments = caseJudgments.filter((j) => j.case_number === c.case_number);
+  const linkedRequests = lawsuitRequests.filter((r) => r.case_number === c.case_number);
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -957,6 +1012,233 @@ function CaseDetailDialog({
             )}
           </div>
 
+          {detail?.subject_matter && (
+            <div>
+              <h4 className="text-xs font-bold text-muted-foreground mb-1 flex items-center gap-1.5">
+                <ClipboardList className="h-3.5 w-3.5" />
+                موضوع الدعوي
+              </h4>
+              <p className="text-sm leading-relaxed bg-muted/50 rounded-lg p-3">
+                {detail.subject_matter}
+              </p>
+            </div>
+          )}
+
+          {detail?.plaintiff_requests && (
+            <div>
+              <h4 className="text-xs font-bold text-muted-foreground mb-1 flex items-center gap-1.5">
+                <FileText className="h-3.5 w-3.5" />
+                طلبات المدعي
+              </h4>
+              <p className="text-sm leading-relaxed bg-muted/50 rounded-lg p-3">
+                {detail.plaintiff_requests}
+              </p>
+            </div>
+          )}
+
+          {detail?.case_foundations && (
+            <div>
+              <h4 className="text-xs font-bold text-muted-foreground mb-1 flex items-center gap-1.5">
+                <FileCheck2 className="h-3.5 w-3.5" />
+                أسانيد الدعوي
+              </h4>
+              <p className="text-sm leading-relaxed bg-muted/50 rounded-lg p-3">
+                {detail.case_foundations}
+              </p>
+            </div>
+          )}
+
+          {parties.length > 0 && (
+            <div>
+              <h4 className="text-xs font-bold text-muted-foreground mb-2 flex items-center gap-1.5">
+                <Users className="h-3.5 w-3.5" />
+                أطراف الدعوي ({parties.length})
+              </h4>
+              <div className="space-y-2">
+                {parties.filter((p) => p.party_type === "plaintiff").length > 0 && (
+                  <div className="bg-green-50 rounded-lg p-3 border border-green-200">
+                    <span className="text-xs font-bold text-green-800 mb-1 block">المدعون</span>
+                    {parties
+                      .filter((p) => p.party_type === "plaintiff")
+                      .map((p, i) => (
+                        <div key={`dp-pl-${i}`} className="text-sm py-0.5">
+                          {p.party_name}
+                          {p.role && <span className="text-muted-foreground text-xs mr-2">({p.role})</span>}
+                        </div>
+                      ))}
+                  </div>
+                )}
+                {parties.filter((p) => p.party_type === "defendant").length > 0 && (
+                  <div className="bg-red-50 rounded-lg p-3 border border-red-200">
+                    <span className="text-xs font-bold text-red-800 mb-1 block">المدعى عليهم</span>
+                    {parties
+                      .filter((p) => p.party_type === "defendant")
+                      .map((p, i) => (
+                        <div key={`dp-df-${i}`} className="text-sm py-0.5">
+                          {p.party_name}
+                          {p.role && <span className="text-muted-foreground text-xs mr-2">({p.role})</span>}
+                        </div>
+                      ))}
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+
+          {caseSessions.length > 0 && (
+            <div>
+              <h4 className="text-xs font-bold text-muted-foreground mb-2 flex items-center gap-1.5">
+                <Calendar className="h-3.5 w-3.5" />
+                الجلسات ({caseSessions.length})
+              </h4>
+              <div className="space-y-2">
+                {caseSessions.map((s: any) => (
+                  <div
+                    key={s.id}
+                    className="bg-muted/30 rounded-lg px-3 py-2 border text-sm"
+                  >
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <Badge
+                        variant="outline"
+                        className="text-[10px]"
+                      >
+                        {s.status === "scheduled"
+                          ? "مجدولة"
+                          : s.status === "held"
+                            ? "منعقدة"
+                            : s.status === "postponed"
+                              ? "مؤجلة"
+                              : s.status}
+                      </Badge>
+                      <span className="font-medium">{formatDate(s.session_date)}</span>
+                      {s.session_time && (
+                        <span className="text-xs text-muted-foreground">{s.session_time}</span>
+                      )}
+                    </div>
+                    <div className="flex items-center gap-3 mt-1 text-xs text-muted-foreground">
+                      {s.court && <span>{s.court}</span>}
+                      {s.circuit && <span>دائرة: {s.circuit}</span>}
+                      {s.mechanism && <span>آلية: {s.mechanism}</span>}
+                      {s.degree && <span>درجة: {s.degree}</span>}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {judgments.length > 0 && (
+            <div>
+              <h4 className="text-xs font-bold text-muted-foreground mb-2 flex items-center gap-1.5">
+                <Gavel className="h-3.5 w-3.5" />
+                الأحكام ({judgments.length})
+              </h4>
+              <div className="space-y-2">
+                {judgments.map((j: any, i: number) => (
+                  <div
+                    key={j.id || i}
+                    className="bg-amber-50 rounded-lg p-3 border border-amber-200 text-sm"
+                  >
+                    <div className="flex items-center gap-2 flex-wrap mb-1">
+                      {j.finality && (
+                        <Badge variant="outline" className="text-[10px]">
+                          {j.finality === "final" ? "قطعي" : j.finality === "non_final" ? "غير نهائي" : j.finality}
+                        </Badge>
+                      )}
+                      {j.deed_number && (
+                        <span className="text-xs">صك: {j.deed_number}</span>
+                      )}
+                    </div>
+                    <div className="grid grid-cols-2 gap-x-3 gap-y-1 text-xs">
+                      {j.deed_date && (
+                        <div><span className="text-muted-foreground">تاريخ الصك:</span> {formatDate(j.deed_date)}</div>
+                      )}
+                      {j.court && (
+                        <div><span className="text-muted-foreground">المحكمة:</span> {j.court}</div>
+                      )}
+                      {j.circuit && (
+                        <div><span className="text-muted-foreground">الدائرة:</span> {j.circuit}</div>
+                      )}
+                      {j.degree && (
+                        <div><span className="text-muted-foreground">الدرجة:</span> {j.degree}</div>
+                      )}
+                      {j.appeal_type && (
+                        <div><span className="text-muted-foreground">الاستئناف:</span> {j.appeal_type}</div>
+                      )}
+                      {j.appeal_number && (
+                        <div><span className="text-muted-foreground">رقم الاستئناف:</span> {j.appeal_number}</div>
+                      )}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {linkedRequests.length > 0 && (
+            <div>
+              <h4 className="text-xs font-bold text-muted-foreground mb-2 flex items-center gap-1.5">
+                <FileSignature className="h-3.5 w-3.5" />
+                الطلبات علي القضية ({linkedRequests.length})
+              </h4>
+              <div className="space-y-2">
+                {linkedRequests.map((r: any, i: number) => (
+                  <div
+                    key={r.id || i}
+                    className="bg-muted/30 rounded-lg px-3 py-2 border text-sm"
+                  >
+                    <div className="font-medium">{r.request_type || r.title || `طلب #${i + 1}`}</div>
+                    {r.description && (
+                      <p className="text-xs text-muted-foreground mt-1">{r.description}</p>
+                    )}
+                    {r.status && (
+                      <Badge variant="outline" className="text-[10px] mt-1">{r.status}</Badge>
+                    )}
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          <div className="flex items-center gap-2">
+            <Button
+              variant="outline"
+              size="sm"
+              className="gap-2"
+              onClick={() => {
+                const input = document.createElement("input");
+                input.type = "file";
+                input.accept = ".pdf,.jpg,.jpeg,.png";
+                input.onchange = async (e: any) => {
+                  const file = e.target.files?.[0];
+                  if (!file) return;
+                  const fileName = `judgment_${c.case_number}_${Date.now()}_${file.name}`;
+                  const { error } = await supabase.storage
+                    .from("documents")
+                    .upload(fileName, file);
+                  if (error) {
+                    toast.error("فشل رفع المستند");
+                    return;
+                  }
+                  const { data: urlData } = supabase.storage
+                    .from("documents")
+                    .getPublicUrl(fileName);
+                  await supabase.from("documents").insert({
+                    case_id: c.id,
+                    title: `صك الحكم - ${c.case_number}`,
+                    doc_type: "judgment_deed",
+                    file_url: urlData.publicUrl,
+                  } as never);
+                  toast.success("تم رفع مستند صك الحكم بنجاح");
+                };
+                input.click();
+              }}
+            >
+              <Upload className="h-4 w-4" />
+              رفع مستند صك الحكم
+            </Button>
+          </div>
+
           {/* Judgment Info */}
           {(c.judgment_number || c.judgment_date || c.deed_number) && (
             <div className="bg-amber-50 rounded-lg p-4 border border-amber-200">
@@ -993,44 +1275,6 @@ function CaseDetailDialog({
               <p className="text-sm leading-relaxed bg-muted/50 rounded-lg p-3">
                 {c.description}
               </p>
-            </div>
-          )}
-
-          {/* Sessions Timeline */}
-          {caseSessions.length > 0 && (
-            <div>
-              <h4 className="text-xs font-bold text-muted-foreground mb-2 flex items-center gap-1.5">
-                <Calendar className="h-3.5 w-3.5" />
-                الجلسات ({caseSessions.length})
-              </h4>
-              <div className="space-y-2">
-                {caseSessions.map((s) => (
-                  <div
-                    key={s.id}
-                    className="flex items-center gap-3 text-sm bg-muted/30 rounded-lg px-3 py-2 border"
-                  >
-                    <Calendar className="h-3.5 w-3.5 text-blue-500 shrink-0" />
-                    <span className="font-medium">{formatDate(s.session_date)}</span>
-                    {s.court && (
-                      <span className="text-muted-foreground text-xs truncate">
-                        — {s.court}
-                      </span>
-                    )}
-                    <Badge
-                      variant="outline"
-                      className="text-[10px] mr-auto"
-                    >
-                      {s.status === "scheduled"
-                        ? "مجدولة"
-                        : s.status === "held"
-                          ? "منعقدة"
-                          : s.status === "postponed"
-                            ? "مؤجلة"
-                            : s.status}
-                    </Badge>
-                  </div>
-                ))}
-              </div>
             </div>
           )}
 

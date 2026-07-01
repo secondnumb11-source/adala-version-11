@@ -40,6 +40,19 @@ type PowerRow = {
   najiz_synced_at: string | null;
   status: string;
   notes: string | null;
+  issuer_entity: string | null;
+  usage_method: string | null;
+  issuer_capacity: string | null;
+  issuer_nationality: string | null;
+  issuer_identity_type: string | null;
+  issuer_status_in_agency: string | null;
+  agent_capacity: string | null;
+  agent_nationality: string | null;
+  agent_identity_type: string | null;
+  agent_status_in_agency: string | null;
+  agency_clauses: string | null;
+  agency_text: string | null;
+  agency_data: string | null;
 };
 
 const daysLeft = (d?: string | null) => {
@@ -246,6 +259,7 @@ function PowerCard({
   expiryClass: (d?: string | null) => { className: string; level: "ok" | "warn" | "danger" | "expired" };
   selected: boolean; onToggleSelect: () => void;
 }) {
+  const [detailOpen, setDetailOpen] = useState(false);
   const { className, level } = expiryClass(row.expiry_date);
   const dl = daysLeft(row.expiry_date);
   const handlePrint = () =>
@@ -304,7 +318,7 @@ function PowerCard({
       </div>
 
       {/* body */}
-      <div className="mt-3 flex-1 min-h-0 relative z-10">
+      <div className="mt-3 flex-1 min-h-0 relative z-10 cursor-pointer" onClick={() => setDetailOpen(true)}>
         <div className="text-[10px] uppercase tracking-[0.25em] text-gold/80">رقم الوكالة</div>
         <div className="mt-0.5 text-base font-extrabold text-white truncate" title={row.wakalah_number}>
           {row.wakalah_number}
@@ -332,7 +346,7 @@ function PowerCard({
       </div>
 
       {/* footer */}
-      <div className="mt-3 grid grid-cols-4 gap-1.5 relative z-10">
+      <div className="mt-3 grid grid-cols-3 gap-1.5 relative z-10">
         <button
           onClick={onSync}
           disabled={syncing}
@@ -349,13 +363,6 @@ function PowerCard({
           <Printer className="h-3.5 w-3.5" />
         </button>
         <button
-          onClick={onEdit}
-          title="تعديل"
-          className="h-8 rounded-lg border border-white/15 bg-white/5 text-white/80 hover:bg-white/10 transition grid place-items-center"
-        >
-          <Pencil className="h-3.5 w-3.5" />
-        </button>
-        <button
           onClick={onDelete}
           title="حذف"
           className="h-8 rounded-lg border border-rose-400/30 bg-rose-400/10 text-rose-300 hover:bg-rose-400/20 transition grid place-items-center"
@@ -363,6 +370,14 @@ function PowerCard({
           <Trash2 className="h-3.5 w-3.5" />
         </button>
       </div>
+
+      <PowerDetailDialog
+        open={detailOpen}
+        onOpenChange={setDetailOpen}
+        row={row}
+        clientName={clientName}
+        onEdit={() => { setDetailOpen(false); onEdit(); }}
+      />
     </div>
   );
 }
@@ -404,6 +419,19 @@ function PowerDialog({
       expiry_date: editing?.expiry_date ?? "",
       scope: editing?.scope ?? "",
       notes: editing?.notes ?? "",
+      issuer_entity: editing?.issuer_entity ?? "",
+      usage_method: editing?.usage_method ?? "",
+      issuer_capacity: editing?.issuer_capacity ?? "",
+      issuer_nationality: editing?.issuer_nationality ?? "",
+      issuer_identity_type: editing?.issuer_identity_type ?? "",
+      issuer_status_in_agency: editing?.issuer_status_in_agency ?? "",
+      agent_capacity: editing?.agent_capacity ?? "",
+      agent_nationality: editing?.agent_nationality ?? "",
+      agent_identity_type: editing?.agent_identity_type ?? "",
+      agent_status_in_agency: editing?.agent_status_in_agency ?? "",
+      agency_clauses: editing?.agency_clauses ?? "",
+      agency_text: editing?.agency_text ?? "",
+      agency_data: editing?.agency_data ?? "",
     });
     setClientId(editing?.client_id ?? "");
     setCaseId("");
@@ -442,6 +470,19 @@ function PowerDialog({
       scope: v.scope || null,
       notes: v.notes || null,
       client_id: finalClientId,
+      issuer_entity: v.issuer_entity || null,
+      usage_method: v.usage_method || null,
+      issuer_capacity: v.issuer_capacity || null,
+      issuer_nationality: v.issuer_nationality || null,
+      issuer_identity_type: v.issuer_identity_type || null,
+      issuer_status_in_agency: v.issuer_status_in_agency || null,
+      agent_capacity: v.agent_capacity || null,
+      agent_nationality: v.agent_nationality || null,
+      agent_identity_type: v.agent_identity_type || null,
+      agent_status_in_agency: v.agent_status_in_agency || null,
+      agency_clauses: v.agency_clauses || null,
+      agency_text: v.agency_text || null,
+      agency_data: v.agency_data || null,
     };
     if (caseId) payload.notes = `${payload.notes ?? ""}\nقضية مرتبطة: ${caseId}`.trim();
     await onSubmit(payload);
@@ -508,10 +549,32 @@ function PowerDialog({
           <FieldInput v={v} setV={setV} name="agent_id_number" label="رقم هوية الوكيل" />
           <FieldInput v={v} setV={setV} name="issue_date" label="تاريخ الإصدار" type="date" />
           <FieldInput v={v} setV={setV} name="expiry_date" label="تاريخ الانتهاء" type="date" />
+          <FieldInput v={v} setV={setV} name="issuer_entity" label="جهة الإصدار" />
+          <FieldInput v={v} setV={setV} name="usage_method" label="كيفية الاستخدام" />
+          <FieldInput v={v} setV={setV} name="issuer_capacity" label="صفة الموكل" />
+          <FieldInput v={v} setV={setV} name="issuer_nationality" label="جنسية الموكل" />
+          <FieldInput v={v} setV={setV} name="issuer_identity_type" label="نوع هوية الموكل" />
+          <FieldInput v={v} setV={setV} name="issuer_status_in_agency" label="وضع الموكل في الوكالة" />
+          <FieldInput v={v} setV={setV} name="agent_capacity" label="صفة الوكيل" />
+          <FieldInput v={v} setV={setV} name="agent_nationality" label="جنسية الوكيل" />
+          <FieldInput v={v} setV={setV} name="agent_identity_type" label="نوع هوية الوكيل" />
+          <FieldInput v={v} setV={setV} name="agent_status_in_agency" label="وضع الوكيل في الوكالة" />
 
           <div className="md:col-span-2">
             <Label className="text-xs font-semibold mb-1.5 block">نطاق / موضوع الوكالة</Label>
             <Textarea value={v.scope ?? ""} onChange={(e) => setV({ ...v, scope: e.target.value })} className="text-right min-h-[70px]" />
+          </div>
+          <div className="md:col-span-2">
+            <Label className="text-xs font-semibold mb-1.5 block">بنود الوكالة</Label>
+            <Textarea value={v.agency_clauses ?? ""} onChange={(e) => setV({ ...v, agency_clauses: e.target.value })} className="text-right min-h-[70px]" />
+          </div>
+          <div className="md:col-span-2">
+            <Label className="text-xs font-semibold mb-1.5 block">نص الوكالة</Label>
+            <Textarea value={v.agency_text ?? ""} onChange={(e) => setV({ ...v, agency_text: e.target.value })} className="text-right min-h-[70px]" />
+          </div>
+          <div className="md:col-span-2">
+            <Label className="text-xs font-semibold mb-1.5 block">بيانات الوكالة</Label>
+            <Textarea value={v.agency_data ?? ""} onChange={(e) => setV({ ...v, agency_data: e.target.value })} className="text-right min-h-[70px]" />
           </div>
           <div className="md:col-span-2">
             <Label className="text-xs font-semibold mb-1.5 block">ملاحظات</Label>
@@ -542,5 +605,103 @@ function FieldInput({ v, setV, name, label, type = "text", required }: {
       </Label>
       <Input type={type} value={v[name] ?? ""} onChange={(e) => setV({ ...v, [name]: e.target.value })} required={required} className="text-right" />
     </div>
+  );
+}
+
+function DetailField({ label, value }: { label: string; value: any }) {
+  if (value == null || value === "") return null;
+  return (
+    <div className="flex flex-col gap-0.5">
+      <span className="text-[11px] text-gold/70 font-semibold">{label}</span>
+      <span className="text-sm text-white/90 whitespace-pre-wrap break-words">{value}</span>
+    </div>
+  );
+}
+
+function PowerDetailDialog({
+  open, onOpenChange, row, clientName, onEdit,
+}: {
+  open: boolean; onOpenChange: (v: boolean) => void;
+  row: PowerRow; clientName?: string; onEdit: () => void;
+}) {
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="max-w-3xl max-h-[90vh] overflow-y-auto" dir="rtl">
+        <DialogHeader>
+          <DialogTitle className="text-right text-xl">تفاصيل الوكالة رقم {row.wakalah_number}</DialogTitle>
+          <DialogDescription className="text-right text-xs">جميع بيانات الوكالة القضائية</DialogDescription>
+        </DialogHeader>
+
+        <div className="space-y-6 mt-2">
+          <section className="space-y-3">
+            <h3 className="text-sm font-bold text-gold border-b border-gold/20 pb-1">البيانات الأساسية</h3>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+              <DetailField label="رقم الوكالة" value={row.wakalah_number} />
+              <DetailField label="جهة الإصدار" value={row.issuer_entity} />
+              <DetailField label="كيفية الاستخدام" value={row.usage_method} />
+              <DetailField label="تاريخ الإصدار" value={row.issue_date} />
+              <DetailField label="تاريخ الانتهاء" value={row.expiry_date} />
+              <DetailField label="الحالة" value={row.status} />
+              {clientName && <DetailField label="العميل المرتبط" value={clientName} />}
+              {row.scope && <DetailField label="نطاق / موضوع الوكالة" value={row.scope} />}
+            </div>
+          </section>
+
+          <section className="space-y-3">
+            <h3 className="text-sm font-bold text-gold border-b border-gold/20 pb-1">بيانات الموكل</h3>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+              <DetailField label="اسم الموكل" value={row.issuer_name} />
+              <DetailField label="صفة الموكل" value={row.issuer_capacity} />
+              <DetailField label="جنسية الموكل" value={row.issuer_nationality} />
+              <DetailField label="نوع هوية الموكل" value={row.issuer_identity_type} />
+              <DetailField label="رقم هوية الموكل" value={row.issuer_id_number} />
+              <DetailField label="وضع الموكل في الوكالة" value={row.issuer_status_in_agency} />
+            </div>
+          </section>
+
+          <section className="space-y-3">
+            <h3 className="text-sm font-bold text-gold border-b border-gold/20 pb-1">بيانات الوكيل</h3>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+              <DetailField label="اسم الوكيل" value={row.agent_name} />
+              <DetailField label="صفة الوكيل" value={row.agent_capacity} />
+              <DetailField label="جنسية الوكيل" value={row.agent_nationality} />
+              <DetailField label="نوع هوية الوكيل" value={row.agent_identity_type} />
+              <DetailField label="رقم هوية الوكيل" value={row.agent_id_number} />
+              <DetailField label="وضع الوكيل في الوكالة" value={row.agent_status_in_agency} />
+            </div>
+          </section>
+
+          <section className="space-y-3">
+            <h3 className="text-sm font-bold text-gold border-b border-gold/20 pb-1">بنود الوكالة</h3>
+            <DetailField label="البنود" value={row.agency_clauses} />
+          </section>
+
+          <section className="space-y-3">
+            <h3 className="text-sm font-bold text-gold border-b border-gold/20 pb-1">نص الوكالة</h3>
+            <DetailField label="النص" value={row.agency_text} />
+          </section>
+
+          <section className="space-y-3">
+            <h3 className="text-sm font-bold text-gold border-b border-gold/20 pb-1">بيانات الوكالة</h3>
+            <DetailField label="البيانات" value={row.agency_data} />
+          </section>
+
+          {row.notes && (
+            <section className="space-y-3">
+              <h3 className="text-sm font-bold text-gold border-b border-gold/20 pb-1">ملاحظات</h3>
+              <DetailField label="ملاحظات" value={row.notes} />
+            </section>
+          )}
+        </div>
+
+        <DialogFooter className="gap-2 mt-4">
+          <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>إغلاق</Button>
+          <Button type="button" className="btn-gold gap-2" onClick={onEdit}>
+            <Pencil className="h-4 w-4" />
+            تعديل
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }

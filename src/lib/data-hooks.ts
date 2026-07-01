@@ -6,13 +6,14 @@ type TableName =
   | "cases" | "clients" | "employees" | "powers_of_attorney"
   | "executions" | "tasks" | "sessions" | "documents"
   | "client_notifications" | "portal_messages" | "najiz_sync_logs"
-  | "sync_tokens";
+  | "sync_tokens" | "lawsuit_requests" | "case_details" | "case_parties"
+  | "case_sessions_detail" | "case_judgments";
 
 export function useList<T = any>(table: TableName, orderBy = "created_at", asc = false) {
   return useQuery({
     queryKey: [table, "list"],
     queryFn: async () => {
-      const { data, error } = await supabase
+      const { data, error } = await (supabase as any)
         .from(table)
         .select("*")
         .order(orderBy, { ascending: asc });
@@ -30,8 +31,8 @@ export function useUpsert(table: TableName) {
       if (!user) throw new Error("غير مسجل دخول");
       const payload = { ...row, owner_id: row.owner_id ?? user.id };
       const { data, error } = row.id
-        ? await supabase.from(table).update(payload as never).eq("id", row.id).select().single()
-        : await supabase.from(table).insert(payload as never).select().single();
+        ? await (supabase as any).from(table).update(payload as never).eq("id", row.id).select().single()
+        : await (supabase as any).from(table).insert(payload as never).select().single();
       if (error) throw error;
       return data;
     },
@@ -50,7 +51,7 @@ export function useDelete(table: TableName) {
       // .select() makes Supabase return the rows actually deleted. Under RLS, a row the
       // current user does not own is silently skipped (no error, 0 rows). We detect that
       // and surface a clear message instead of a false success.
-      const { data, error } = await supabase.from(table).delete().eq("id", id).select("id");
+      const { data, error } = await (supabase as any).from(table).delete().eq("id", id).select("id");
       if (error) throw error;
       if (!data || data.length === 0) {
         throw new Error("تعذّر الحذف: هذا السجل غير مملوك لحسابك الحالي أو لا تملك صلاحية حذفه.");
