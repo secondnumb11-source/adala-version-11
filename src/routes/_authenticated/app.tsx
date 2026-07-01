@@ -5,7 +5,7 @@ import {
   UserCog, ShieldCheck, ListChecks, Bell, FolderArchive, Sparkles, Library,
   Landmark, BadgeCheck, Network, Settings, LogOut, Scale, Menu, X, Search,
   PanelRightClose, PanelRightOpen, BarChart3, Calculator, Timer, Receipt,
-  FileText, FileSpreadsheet, Brain, ChevronDown, LifeBuoy, Power,
+  FileText, FileSpreadsheet, Brain, ChevronDown, LifeBuoy, Power, Clock,
 } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { Input } from "@/components/ui/input";
@@ -56,10 +56,12 @@ const NAV_GROUPS: NavGroup[] = [
     items: [
       { to: "/app", label: "لوحة البيانات الرئيسية", icon: LayoutDashboard, exact: true },
       { to: "/app/cases", label: "إدارة القضايا", icon: Briefcase },
+      { to: "/app/case-timeline", label: "الجدول الزمني للقضايا", icon: Clock },
       { to: "/app/lawsuit-requests", label: "الطلبات على القضايا", icon: FileText },
       { to: "/app/sessions", label: "مواعيد الجلسات", icon: CalendarDays },
       { to: "/app/archive", label: "أرشيف المستندات والأحكام", icon: FolderArchive },
       { to: "/app/execution", label: "طلبات التنفيذ", icon: Workflow },
+      { to: "/app/billing", label: "الفواتير والمدفوعات", icon: Receipt },
     ],
   },
   {
@@ -96,6 +98,8 @@ const NAV_GROUPS: NavGroup[] = [
         ai: true,
         children: [
           { to: "/app/ai/consultant", label: "المستشار والمحلل الذكي", icon: Brain },
+          { to: "/app/ai/legal-research", label: "البحث القانوني الذكي", icon: Library },
+          { to: "/app/ai/contract-analysis", label: "تحليل العقود الذكي", icon: FileText },
           { to: "/app/ai/memos", label: "صياغة اللوائح والمذكرات", icon: FileText },
           { to: "/app/ai/contracts", label: "صياغة العقود", icon: FileSignature },
           { to: "/app/ai/invoices", label: "إصدار الفواتير", icon: Receipt },
