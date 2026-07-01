@@ -1571,19 +1571,95 @@
   }
 
   async function clickSidebarTab(label) {
-    const tabs = $all("[class*='tab'], [class*='nav-item'], [role='tab'], button, a, li, [class*='menu-item'], [class*='sidebar'] [class*='item']");
-    for (const tab of tabs) {
-      const t = clean(tab.textContent || tab.innerText || "");
+    // Strategy 1: Look for elements with exact or partial text match in sidebar-like containers
+    // Najiz uses Angular components with specific class patterns
+    const sidebarSelectors = [
+      "[class*='sidebar']",
+      "[class*='side-bar']",
+      "[class*='sidenav']",
+      "[class*='side-nav']",
+      "[class*='menu']",
+      "[class*='nav-tabs']",
+      "[class*='tabset']",
+      "[class*='accordion']",
+      "[role='tablist']",
+      "[role='navigation']",
+      "nav",
+      "aside",
+      ".mat-tab-list",
+      ".nav",
+      ".tabs",
+    ];
+    
+    // First try to find a sidebar container, then look for clickable items within it
+    for (const sidebarSel of sidebarSelectors) {
+      const sidebars = $all(sidebarSel);
+      for (const sidebar of sidebars) {
+        const items = $all("a, button, [role='tab'], li, [class*='item'], [class*='tab'], [class*='link'], span, div", sidebar);
+        for (const item of items) {
+          const t = clean(item.textContent || item.innerText || "");
+          if (!t || t.length > 80) continue;
+          if (t.includes(label)) {
+            try {
+              // Scroll the item into view first
+              item.scrollIntoView({ behavior: "instant", block: "center" });
+              await sleep(300);
+              item.click();
+              await sleep(2000);
+              // After clicking, scroll the main content area to load all data
+              await autoScrollFull();
+              return true;
+            } catch {}
+          }
+        }
+      }
+    }
+    
+    // Strategy 2: Search the entire page for clickable elements with the label
+    // This is a fallback for when the sidebar doesn't have distinctive classes
+    const allClickable = $all("a, button, [role='tab'], [role='button'], li, [class*='tab'], [class*='nav-item'], [class*='menu-item'], [class*='sidebar'] *, [class*='side'] *");
+    for (const el of allClickable) {
+      const t = clean(el.textContent || el.innerText || "");
       if (!t || t.length > 60) continue;
       if (t.includes(label)) {
+        // Verify this looks like a navigation element (not random text)
+        const parent = el.parentElement;
+        const parentClass = (parent?.className || "").toLowerCase();
+        const isNavLike = /tab|nav|menu|side|list|item|link|btn|button|accordion/i.test(parentClass) ||
+                          parent?.getAttribute("role") === "tablist" ||
+                          parent?.tagName === "NAV" ||
+                          parent?.tagName === "ASIDE" ||
+                          parent?.tagName === "UL";
+        if (isNavLike || t.length < 30) {
+          try {
+            el.scrollIntoView({ behavior: "instant", block: "center" });
+            await sleep(300);
+            el.click();
+            await sleep(2000);
+            await autoScrollFull();
+            return true;
+          } catch {}
+        }
+      }
+    }
+    
+    // Strategy 3: Last resort - look for any element with the exact label text
+    const allElements = $all("*");
+    for (const el of allElements) {
+      if (el.children.length > 5) continue;
+      const t = clean(el.textContent || el.innerText || "");
+      if (t === label || t === label + ":" || t === label + " :") {
         try {
-          tab.click();
-          await sleep(1500);
+          el.scrollIntoView({ behavior: "instant", block: "center" });
+          await sleep(300);
+          el.click();
+          await sleep(2000);
           await autoScrollFull();
           return true;
         } catch {}
       }
     }
+    
     return false;
   }
 
