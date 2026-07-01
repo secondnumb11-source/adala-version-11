@@ -4,14 +4,18 @@ import { useMutation, useQueryClient } from "@tanstack/react-query";
 import {
   ScrollText, AlertTriangle, RefreshCw, Loader2, Printer,
   CalendarClock, User, ShieldCheck, FileSignature, Trash2, Pencil, Network, Plus,
+  X, Eye, BookOpen, Building2, FileText, Scale,
 } from "lucide-react";
 import { PageHeader } from "@/components/section-shell";
+import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { ScrollArea } from "@/components/ui/scroll-area";
+import { Separator } from "@/components/ui/separator";
 import { useList, useUpsert, useDelete } from "@/lib/data-hooks";
 import { useRealtimeTable } from "@/lib/realtime";
 import { supabase } from "@/integrations/supabase/client";
@@ -55,6 +59,18 @@ type PowerRow = {
   agency_data: string | null;
 };
 
+const STATUS_LABEL: Record<string, string> = {
+  active: "سارية",
+  expired: "منتهية",
+  revoked: "ملغاة",
+};
+
+const STATUS_COLORS: Record<string, string> = {
+  active: "bg-emerald-500/15 text-emerald-700 border-emerald-500/30",
+  expired: "bg-gray-500/15 text-gray-700 border-gray-500/30",
+  revoked: "bg-rose-500/15 text-rose-700 border-rose-500/30",
+};
+
 const daysLeft = (d?: string | null) => {
   if (!d) return null;
   const t = new Date(d).getTime();
@@ -70,6 +86,14 @@ const makeExpiryClass = (warnDays: number) =>
     return { className: "", level: "ok" };
   };
 
+const formatDate = (dateStr: string | null) => {
+  if (!dateStr) return null;
+  try {
+    const date = new Date(dateStr);
+    return date.toLocaleDateString("ar-SA", { year: "numeric", month: "2-digit", day: "2-digit" });
+  } catch { return dateStr; }
+};
+
 function PowersPage() {
   useRealtimeTable("powers_of_attorney", ["powers_of_attorney"]);
   const qc = useQueryClient();
@@ -83,6 +107,7 @@ function PowersPage() {
   const [warnDays, setWarnDays] = useExpiryWarnDays();
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [bundleBusy, setBundleBusy] = useState<"" | "combined" | "zip">("");
+  const [selectedPower, setSelectedPower] = useState<PowerRow | null>(null);
   const expiryClass = useMemo(() => makeExpiryClass(warnDays), [warnDays]);
 
   const expiringCount = useMemo(
@@ -117,15 +142,28 @@ function PowersPage() {
             fileName: `wakalah-${row.wakalah_number}.pdf`,
             fields: [
               { label: "رقم الوكالة", value: row.wakalah_number },
-              { label: "اسم الموكل", value: row.issuer_name },
-              { label: "رقم هوية الموكل", value: row.issuer_id_number },
+              { label: "اسم المُصدر", value: row.issuer_name },
+              { label: "صفته", value: row.issuer_capacity },
+              { label: "جنسيته", value: row.issuer_nationality },
+              { label: "نوع هويته", value: row.issuer_identity_type },
+              { label: "رقم هويته", value: row.issuer_id_number },
+              { label: "حالته في الوكالة", value: row.issuer_status_in_agency },
               { label: "اسم الوكيل", value: row.agent_name },
-              { label: "رقم هوية الوكيل", value: row.agent_id_number },
+              { label: "صفته", value: row.agent_capacity },
+              { label: "جنسيته", value: row.agent_nationality },
+              { label: "نوع هويته", value: row.agent_identity_type },
+              { label: "رقم هويته", value: row.agent_id_number },
+              { label: "حالته في الوكالة", value: row.agent_status_in_agency },
+              { label: "جهة الإصدار", value: row.issuer_entity },
+              { label: "كيفية الاستخدام", value: row.usage_method },
               { label: "العميل المرتبط", value: clientName },
               { label: "تاريخ الإصدار", value: row.issue_date },
               { label: "تاريخ الانتهاء", value: row.expiry_date },
               { label: "الحالة", value: row.status },
               { label: "نطاق / موضوع الوكالة", value: row.scope },
+              { label: "بنود الوكالة", value: row.agency_clauses },
+              { label: "نص الوكالة", value: row.agency_text },
+              { label: "بيانات الوكالة", value: row.agency_data },
               { label: "ملاحظات", value: row.notes },
             ],
           };
@@ -142,8 +180,6 @@ function PowersPage() {
 
   const sync = useMutation({
     mutationFn: async () => {
-      // Refresh from supabase (the extension writes directly via /api/public/najiz-sync).
-      // Surface latest najiz sync log for context.
       const { data: logs } = await supabase
         .from("najiz_sync_logs")
         .select("created_at, items_count, source, status")
@@ -226,168 +262,307 @@ function PowersPage() {
       {isLoading ? (
         <p className="text-center text-muted-foreground py-10">جارٍ التحميل...</p>
       ) : rows.length === 0 ? (
-        <div className="card-luxe p-12 text-center text-white/70">
-          لا توجد وكالات حتى الآن — استخدم زر "إضافة وكالة" أو "مزامنة مع ناجز"
-        </div>
+        <Card className="card-luxe border-none p-10 text-center">
+          <p className="text-sm">لا توجد وكالات حتى الآن — استخدم زر "إضافة وكالة" أو "مزامنة مع ناجز"</p>
+        </Card>
       ) : (
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-5">
-          {rows.map((r) => (
-            <PowerCard
-              key={r.id}
-              row={r}
-              clientName={clients.find((c) => c.id === r.client_id)?.full_name}
-              onEdit={() => { setEditing(r); setOpen(true); }}
-              onDelete={() => { if (confirm(`حذف الوكالة ${r.wakalah_number}؟`)) del.mutate(r.id); }}
-              onSync={() => sync.mutate()}
-              syncing={sync.isPending}
-              expiryClass={expiryClass}
-              selected={selected.has(r.id)}
-              onToggleSelect={() => toggleSelect(r.id)}
-            />
-          ))}
+        <div className="grid gap-5 md:grid-cols-2 xl:grid-cols-3">
+          {rows.map((r) => {
+            const clientName = clients.find((c) => c.id === r.client_id)?.full_name;
+            return (
+              <PowerCard
+                key={r.id}
+                row={r}
+                clientName={clientName}
+                onView={() => setSelectedPower(r)}
+                onEdit={() => { setEditing(r); setOpen(true); }}
+                onDelete={() => { if (confirm(`حذف الوكالة ${r.wakalah_number}؟`)) del.mutate(r.id); }}
+                onSync={() => sync.mutate()}
+                syncing={sync.isPending}
+                expiryClass={expiryClass}
+                selected={selected.has(r.id)}
+                onToggleSelect={() => toggleSelect(r.id)}
+              />
+            );
+          })}
         </div>
       )}
+
+      <Dialog open={!!selectedPower} onOpenChange={(v) => !v && setSelectedPower(null)}>
+        <DialogContent className="max-w-4xl max-h-[90vh] overflow-hidden flex flex-col" dir="rtl">
+          <DialogHeader>
+            <div className="flex items-center justify-between">
+              <DialogTitle className="text-xl font-black text-[#1f1810]">
+                <span className="text-[#8a6a1a]">#{selectedPower?.wakalah_number}</span> تفاصيل الوكالة
+              </DialogTitle>
+              <Button variant="ghost" size="icon" onClick={() => setSelectedPower(null)}><X className="h-5 w-5" /></Button>
+            </div>
+          </DialogHeader>
+
+          {selectedPower && (
+            <PowerDetailView
+              row={selectedPower}
+              clientName={clients.find((c) => c.id === selectedPower.client_id)?.full_name}
+              onEdit={() => { setSelectedPower(null); setEditing(selectedPower); setOpen(true); }}
+            />
+          )}
+        </DialogContent>
+      </Dialog>
     </>
   );
 }
 
-function PowerCard({
-  row, clientName, onEdit, onDelete, onSync, syncing, expiryClass, selected, onToggleSelect,
-}: {
-  row: PowerRow; clientName?: string;
-  onEdit: () => void; onDelete: () => void; onSync: () => void; syncing: boolean;
-  expiryClass: (d?: string | null) => { className: string; level: "ok" | "warn" | "danger" | "expired" };
-  selected: boolean; onToggleSelect: () => void;
-}) {
-  const [detailOpen, setDetailOpen] = useState(false);
-  const { className, level } = expiryClass(row.expiry_date);
-  const dl = daysLeft(row.expiry_date);
-  const handlePrint = () =>
-    exportRecordPdf({
-      title: `وكالة قضائية رقم ${row.wakalah_number}`,
-      subtitle: clientName ? `العميل: ${clientName}` : undefined,
-      fields: [
-        { label: "رقم الوكالة", value: row.wakalah_number },
-        { label: "اسم الموكل", value: row.issuer_name },
-        { label: "رقم هوية الموكل", value: row.issuer_id_number },
-        { label: "اسم الوكيل", value: row.agent_name },
-        { label: "رقم هوية الوكيل", value: row.agent_id_number },
-        { label: "العميل المرتبط", value: clientName },
-        { label: "تاريخ الإصدار", value: row.issue_date },
-        { label: "تاريخ الانتهاء", value: row.expiry_date },
-        { label: "الحالة", value: row.status },
-        { label: "نطاق / موضوع الوكالة", value: row.scope },
-        { label: "ملاحظات", value: row.notes },
-        { label: "مصدر", value: row.najiz_id ? "ناجز" : "يدوي" },
-        { label: "آخر مزامنة مع ناجز", value: row.najiz_synced_at },
-      ],
-      footer: "هذا المستند تم إنشاؤه آلياً للأرشفة والمراجعة.",
-      fileName: `wakalah-${row.wakalah_number}.pdf`,
-    }).catch((e) => toast.error(e?.message || "فشل التصدير"));
+function PowerDetailView({ row, clientName, onEdit }: { row: PowerRow; clientName?: string; onEdit: () => void }) {
+  const [activeTab, setActiveTab] = useState("basic");
+
+  const tabs = [
+    { id: "basic", label: "البيانات الأساسية", icon: BookOpen },
+    { id: "issuer", label: "بيانات المُصدر", icon: User },
+    { id: "agent", label: "بيانات الوكيل", icon: ShieldCheck },
+    { id: "agency", label: "بيانات الوكالة", icon: FileText },
+  ];
 
   return (
-    <div className={`card-luxe aspect-square flex flex-col p-5 relative ${className} ${selected ? "ring-2 ring-gold/70" : ""}`}>
-      <label className="absolute top-2 right-2 z-20 flex items-center gap-1 rounded-md bg-black/30 px-2 py-1 text-[10px] text-white/80 cursor-pointer">
-        <input type="checkbox" checked={selected} onChange={onToggleSelect} className="accent-gold" />
-        تحديد
-      </label>
-      <div className="flex items-start justify-between gap-2 relative z-10">
-        <div className="grid h-11 w-11 place-items-center rounded-xl bg-gradient-to-br from-gold to-gold/60 text-primary shadow-md shrink-0">
-          <FileSignature className="h-5 w-5" />
-        </div>
-        <div className="flex flex-col items-end gap-1.5">
-          {row.najiz_id ? (
-            <span className="inline-flex items-center gap-1 rounded-md border border-emerald-400/40 bg-emerald-400/10 px-2 py-0.5 text-[10px] font-bold text-emerald-300">
-              <Network className="h-3 w-3" /> ناجز
-            </span>
-          ) : (
-            <span className="inline-flex items-center gap-1 rounded-md border border-white/15 bg-white/5 px-2 py-0.5 text-[10px] font-bold text-white/70">
-              يدوي
-            </span>
-          )}
-          {dl != null && (level === "danger" || level === "expired" || level === "warn") && (
-            <span
-              data-testid="poa-expiry-badge"
-              className={`inline-flex items-center gap-1 rounded-md px-2 py-0.5 text-[11px] font-extrabold shadow-md border-2 border-red-600 bg-red-600 text-white ${level === "warn" ? "" : "animate-pulse"}`}
-            >
-              <AlertTriangle className="h-3.5 w-3.5" />
-              {level === "expired" ? `منتهية منذ ${Math.abs(dl)} يوم` : `تنتهي خلال ${dl} يوم`}
-            </span>
-          )}
-        </div>
-      </div>
-
-      {/* body */}
-      <div className="mt-3 flex-1 min-h-0 relative z-10 cursor-pointer" onClick={() => setDetailOpen(true)}>
-        <div className="text-[10px] uppercase tracking-[0.25em] text-gold/80">رقم الوكالة</div>
-        <div className="mt-0.5 text-base font-extrabold text-white truncate" title={row.wakalah_number}>
-          {row.wakalah_number}
+    <ScrollArea className="flex-1 -mx-2">
+      <div className="px-2 space-y-4">
+        <div className="flex gap-1 border-b pb-2 overflow-x-auto">
+          {tabs.map((tab) => (
+            <button key={tab.id} onClick={() => setActiveTab(tab.id)}
+              className={`flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-bold transition-all whitespace-nowrap ${activeTab === tab.id ? "bg-[#c9a227]/15 text-[#8a6a1a] border border-[#c9a227]/30" : "text-muted-foreground hover:bg-muted"}`}>
+              <tab.icon className="h-3.5 w-3.5" />{tab.label}
+            </button>
+          ))}
         </div>
 
-        <dl className="mt-3 space-y-1.5 text-[12px] text-white/80">
-          <Row icon={User} label="الموكل" value={row.issuer_name} />
-          <Row icon={User} label="هوية الموكل" value={row.issuer_id_number} />
-          <Row icon={ShieldCheck} label="الوكيل" value={row.agent_name} />
-          <Row icon={ShieldCheck} label="هوية الوكيل" value={row.agent_id_number} />
-          {clientName && <Row icon={User} label="العميل" value={clientName} />}
-          <Row icon={CalendarClock} label="الإصدار" value={row.issue_date} />
-          <Row
-            icon={CalendarClock}
-            label="الانتهاء"
-            value={row.expiry_date}
-            highlight={level !== "ok"}
-          />
-          {row.scope && (
-            <div className="text-[11px] text-white/65 line-clamp-2 pt-1 border-t border-white/10 mt-2">
-              {row.scope}
+        {activeTab === "basic" && (
+          <div className="space-y-4">
+            <div className="grid grid-cols-2 gap-3">
+              <InfoField label="رقم الوكالة" value={row.wakalah_number} />
+              <InfoField label="الحالة" value={row.status ? (STATUS_LABEL[row.status] || row.status) : null} />
+              <InfoField label="تاريخ الإصدار" value={formatDate(row.issue_date)} />
+              <InfoField label="تاريخ الانتهاء" value={formatDate(row.expiry_date)} />
+              <InfoField label="جهة الإصدار" value={row.issuer_entity} />
+              <InfoField label="كيفية الاستخدام" value={row.usage_method} />
+              {clientName && <InfoField label="العميل المرتبط" value={clientName} />}
+              {row.najiz_id && <InfoField label="معرّف ناجز" value={row.najiz_id} />}
+              {row.najiz_synced_at && <InfoField label="آخر مزامنة" value={new Date(row.najiz_synced_at).toLocaleString("ar-SA-u-ca-gregory", { dateStyle: "medium", timeStyle: "short" })} />}
             </div>
-          )}
-        </dl>
-      </div>
+            {row.scope && <InfoField label="نطاق / موضوع الوكالة" value={row.scope} full />}
+            {row.notes && <InfoField label="ملاحظات" value={row.notes} full />}
+          </div>
+        )}
 
-      {/* footer */}
-      <div className="mt-3 grid grid-cols-3 gap-1.5 relative z-10">
-        <button
-          onClick={onSync}
-          disabled={syncing}
-          title="مزامنة مع ناجز"
-          className="h-8 rounded-lg border border-emerald-400/30 bg-emerald-400/10 text-emerald-200 hover:bg-emerald-400/20 transition grid place-items-center"
-        >
-          {syncing ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RefreshCw className="h-3.5 w-3.5" />}
-        </button>
-        <button
-          onClick={handlePrint}
-          title="طباعة PDF"
-          className="h-8 rounded-lg border border-gold/40 bg-gold/10 text-gold hover:bg-gold/20 transition grid place-items-center"
-        >
-          <Printer className="h-3.5 w-3.5" />
-        </button>
-        <button
-          onClick={onDelete}
-          title="حذف"
-          className="h-8 rounded-lg border border-rose-400/30 bg-rose-400/10 text-rose-300 hover:bg-rose-400/20 transition grid place-items-center"
-        >
-          <Trash2 className="h-3.5 w-3.5" />
-        </button>
-      </div>
+        {activeTab === "issuer" && (
+          <div className="space-y-4">
+            <Card className="p-4 border-emerald-200/40 bg-gradient-to-l from-emerald-50/40 to-transparent">
+              <div className="grid grid-cols-2 gap-3 text-xs">
+                <InfoField label="اسم المُصدر" value={row.issuer_name} />
+                <InfoField label="صفة المُصدر" value={row.issuer_capacity} />
+                <InfoField label="جنسية المُصدر" value={row.issuer_nationality} />
+                <InfoField label="نوع هوية المُصدر" value={row.issuer_identity_type} />
+                <InfoField label="رقم هوية المُصدر" value={row.issuer_id_number} />
+                <InfoField label="حالة المُصدر في الوكالة" value={row.issuer_status_in_agency} />
+              </div>
+            </Card>
+          </div>
+        )}
 
-      <PowerDetailDialog
-        open={detailOpen}
-        onOpenChange={setDetailOpen}
-        row={row}
-        clientName={clientName}
-        onEdit={() => { setDetailOpen(false); onEdit(); }}
-      />
-    </div>
+        {activeTab === "agent" && (
+          <div className="space-y-4">
+            <Card className="p-4 border-blue-200/40 bg-gradient-to-l from-blue-50/40 to-transparent">
+              <div className="grid grid-cols-2 gap-3 text-xs">
+                <InfoField label="اسم الوكيل" value={row.agent_name} />
+                <InfoField label="صفة الوكيل" value={row.agent_capacity} />
+                <InfoField label="جنسية الوكيل" value={row.agent_nationality} />
+                <InfoField label="نوع هوية الوكيل" value={row.agent_identity_type} />
+                <InfoField label="رقم هوية الوكيل" value={row.agent_id_number} />
+                <InfoField label="حالة الوكيل في الوكالة" value={row.agent_status_in_agency} />
+              </div>
+            </Card>
+          </div>
+        )}
+
+        {activeTab === "agency" && (
+          <div className="space-y-4">
+            <div className="grid grid-cols-2 gap-3">
+              <InfoField label="جهة الإصدار" value={row.issuer_entity} />
+              <InfoField label="كيفية الاستخدام" value={row.usage_method} />
+            </div>
+            <Separator />
+            {row.agency_data && (
+              <div>
+                <h4 className="text-sm font-black text-[#8a6a1a] mb-2 flex items-center gap-2">
+                  <div className="h-2 w-2 rounded-full bg-[#c9a227]" /> بيانات الوكالة
+                </h4>
+                <Card className="p-3 border-[#c9a227]/20 bg-gradient-to-l from-amber-50/40 to-transparent">
+                  <p className="text-xs text-[#1f1810] whitespace-pre-wrap leading-relaxed">{row.agency_data}</p>
+                </Card>
+              </div>
+            )}
+            {row.agency_clauses && (
+              <div>
+                <h4 className="text-sm font-black text-[#8a6a1a] mb-2 flex items-center gap-2">
+                  <div className="h-2 w-2 rounded-full bg-[#c9a227]" /> بنود الوكالة
+                </h4>
+                <Card className="p-3 border-[#c9a227]/20 bg-gradient-to-l from-amber-50/40 to-transparent">
+                  <p className="text-xs text-[#1f1810] whitespace-pre-wrap leading-relaxed">{row.agency_clauses}</p>
+                </Card>
+              </div>
+            )}
+            {row.agency_text && (
+              <div>
+                <h4 className="text-sm font-black text-[#8a6a1a] mb-2 flex items-center gap-2">
+                  <div className="h-2 w-2 rounded-full bg-[#c9a227]" /> نص الوكالة
+                </h4>
+                <Card className="p-3 border-[#c9a227]/20 bg-gradient-to-l from-amber-50/40 to-transparent">
+                  <p className="text-xs text-[#1f1810] whitespace-pre-wrap leading-relaxed">{row.agency_text}</p>
+                </Card>
+              </div>
+            )}
+            {!row.agency_data && !row.agency_clauses && !row.agency_text && (
+              <p className="text-xs text-muted-foreground">لا توجد بيانات وكالة تفصيلية</p>
+            )}
+          </div>
+        )}
+
+        <div className="flex justify-end pt-2 border-t">
+          <Button className="btn-gold gap-2" onClick={onEdit}>
+            <Pencil className="h-4 w-4" />
+            تعديل
+          </Button>
+        </div>
+      </div>
+    </ScrollArea>
   );
 }
 
-function Row({ icon: Icon, label, value, highlight }: { icon: any; label: string; value: any; highlight?: boolean }) {
+function PowerCard({
+  row, clientName, onView, onEdit, onDelete, onSync, syncing, expiryClass, selected, onToggleSelect,
+}: {
+  row: PowerRow; clientName?: string;
+  onView: () => void; onEdit: () => void; onDelete: () => void; onSync: () => void; syncing: boolean;
+  expiryClass: (d?: string | null) => { className: string; level: "ok" | "warn" | "danger" | "expired" };
+  selected: boolean; onToggleSelect: () => void;
+}) {
+  const { className, level } = expiryClass(row.expiry_date);
+  const dl = daysLeft(row.expiry_date);
+
   return (
-    <div className="flex items-center gap-1.5 truncate">
-      <Icon className="h-3 w-3 text-gold/70 shrink-0" />
-      <span className="text-white/55 shrink-0">{label}:</span>
-      <span className={`truncate ${highlight ? "text-rose-300 font-bold" : "text-white/90"}`}>{value || "—"}</span>
+    <Card className="card-luxe border-none p-0 cursor-pointer relative hover:shadow-2xl transition-all duration-300 overflow-hidden group" onClick={onView}>
+      <div className="h-2 bg-gradient-to-l from-[#c9a227] via-[#d4af37] to-[#c9a227]" />
+
+      <div className="p-5">
+        <div className="flex justify-between items-start mb-3 gap-2">
+          <div className="flex-1">
+            <div className={`inline-flex items-center h-7 px-2 text-[11px] font-bold border-2 rounded ${STATUS_COLORS[row.status] || STATUS_COLORS.active}`}>
+              {STATUS_LABEL[row.status] || row.status}
+            </div>
+          </div>
+          <div className="flex flex-col items-end gap-1.5">
+            {row.najiz_id ? (
+              <span className="inline-flex items-center gap-1 rounded-md border border-emerald-400/40 bg-emerald-400/10 px-2 py-0.5 text-[10px] font-bold text-emerald-700">
+                <Network className="h-3 w-3" /> ناجز
+              </span>
+            ) : (
+              <span className="inline-flex items-center gap-1 rounded-md border border-border px-2 py-0.5 text-[10px] font-bold text-muted-foreground">
+                يدوي
+              </span>
+            )}
+            {dl != null && (level === "danger" || level === "expired" || level === "warn") && (
+              <span
+                className={`inline-flex items-center gap-1 rounded-md px-2 py-0.5 text-[11px] font-extrabold shadow-md border-2 border-red-600 bg-red-600 text-white ${level === "warn" ? "" : "animate-pulse"}`}
+              >
+                <AlertTriangle className="h-3.5 w-3.5" />
+                {level === "expired" ? `منتهية منذ ${Math.abs(dl)} يوم` : `تنتهي خلال ${dl} يوم`}
+              </span>
+            )}
+          </div>
+        </div>
+
+        <div className="flex items-center justify-between mb-2">
+          <span className="text-xs font-black text-[#8a6a1a] tracking-wide">#{row.wakalah_number}</span>
+          {row.issue_date && <span className="text-[10px] text-muted-foreground">{formatDate(row.issue_date)}</span>}
+        </div>
+
+        <div className="mb-3 p-3 bg-gradient-to-l from-amber-50/80 to-amber-50/30 rounded-lg border border-amber-200/40">
+          <div className="flex items-center gap-2 mb-2">
+            <User className="h-3.5 w-3.5 text-[#8a6a1a]" />
+            <span className="text-[11px] font-bold text-[#5a4510]">أطراف الوكالة</span>
+          </div>
+          <div className="mb-1.5">
+            <span className="text-[10px] font-bold text-emerald-700">المُصدر:</span>
+            <span className="text-xs font-semibold text-[#1f1810] mr-1">{row.issuer_name || "—"}</span>
+          </div>
+          <div>
+            <span className="text-[10px] font-bold text-blue-700">الوكيل:</span>
+            <span className="text-xs font-semibold text-[#1f1810] mr-1">{row.agent_name || "—"}</span>
+          </div>
+          {clientName && (
+            <div className="mt-1.5 pt-1.5 border-t border-amber-200/40">
+              <span className="text-[10px] font-bold text-[#8a6a1a]">العميل:</span>
+              <span className="text-xs font-semibold text-[#1f1810] mr-1">{clientName}</span>
+            </div>
+          )}
+        </div>
+
+        <div className="mb-3 space-y-1">
+          <div className="flex items-center gap-2">
+            <CalendarClock className="h-3 w-3 text-[#8a6a1a]" />
+            <span className="text-[10px] text-muted-foreground font-bold">الإصدار:</span>
+            <span className="text-xs font-semibold text-[#1f1810]">{formatDate(row.issue_date) || "—"}</span>
+          </div>
+          <div className="flex items-center gap-2">
+            <CalendarClock className="h-3 w-3 text-[#8a6a1a]" />
+            <span className="text-[10px] text-muted-foreground font-bold">الانتهاء:</span>
+            <span className={`text-xs font-semibold ${level !== "ok" ? "text-red-600" : "text-[#1f1810]"}`}>{formatDate(row.expiry_date) || "—"}</span>
+          </div>
+          {row.issuer_entity && (
+            <div className="flex items-center gap-2">
+              <Building2 className="h-3 w-3 text-[#8a6a1a]" />
+              <span className="text-[10px] text-muted-foreground font-bold">جهة الإصدار:</span>
+              <span className="text-xs font-semibold text-[#1f1810] truncate">{row.issuer_entity}</span>
+            </div>
+          )}
+        </div>
+
+        {row.scope && (
+          <div className="mb-3 p-2 bg-muted/30 rounded-lg">
+            <p className="text-[11px] text-muted-foreground line-clamp-2">{row.scope}</p>
+          </div>
+        )}
+
+        <div className="flex items-center gap-2 pt-3 border-t-2 border-[#c9a227]/20">
+          <label className="flex items-center gap-1 text-[10px] text-muted-foreground cursor-pointer" onClick={(e) => e.stopPropagation()}>
+            <input type="checkbox" checked={selected} onChange={onToggleSelect} className="accent-[#c9a227]" />
+            تحديد
+          </label>
+        </div>
+
+        <div className="flex gap-2 mt-3 pt-3 border-t border-border/40">
+          <Button size="sm" variant="outline" className="flex-1 h-8 text-[11px] gap-1" onClick={(e) => { e.stopPropagation(); onView(); }}>
+            <Eye className="h-3 w-3" /> الاطلاع على التفاصيل
+          </Button>
+          <Button size="sm" variant="outline" className="h-8 w-8 p-0" onClick={(e) => { e.stopPropagation(); onSync(); }} disabled={syncing} title="مزامنة">
+            {syncing ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RefreshCw className="h-3.5 w-3.5" />}
+          </Button>
+          <Button size="sm" variant="outline" className="h-8 w-8 p-0" onClick={(e) => { e.stopPropagation(); onEdit(); }} title="تعديل">
+            <Pencil className="h-3.5 w-3.5" />
+          </Button>
+          <Button size="sm" variant="outline" className="h-8 w-8 p-0 text-rose-600 hover:bg-rose-50" onClick={(e) => { e.stopPropagation(); onDelete(); }} title="حذف">
+            <Trash2 className="h-3.5 w-3.5" />
+          </Button>
+        </div>
+      </div>
+    </Card>
+  );
+}
+
+function InfoField({ label, value, full }: { label: string; value: any; full?: boolean }) {
+  if (!value) return null;
+  return (
+    <div className={full ? "col-span-2" : ""}>
+      <span className="text-[10px] font-bold text-muted-foreground block">{label}</span>
+      <span className="text-xs font-semibold text-[#1f1810] leading-relaxed whitespace-pre-wrap">{value}</span>
     </div>
   );
 }
@@ -439,7 +614,6 @@ function PowerDialog({
     setNewClientPhone("");
     setMode("existing");
   }, [open, editing]);
-
 
   const filteredCases = useMemo(
     () => cases.filter((c) => !clientId || c.client_id === clientId),
@@ -498,7 +672,6 @@ function PowerDialog({
         </DialogHeader>
 
         <form onSubmit={handle} className="grid grid-cols-1 md:grid-cols-2 gap-4 mt-2">
-          {/* Client mode toggle */}
           <div className="md:col-span-2 flex flex-wrap items-center gap-2">
             <Label className="text-xs font-semibold ml-1">العميل:</Label>
             <div className="inline-flex rounded-lg border bg-muted/40 p-1">
@@ -543,26 +716,30 @@ function PowerDialog({
           )}
 
           <FieldInput v={v} setV={setV} name="wakalah_number" label="رقم الوكالة" required />
-          <FieldInput v={v} setV={setV} name="issuer_name" label="اسم الموكل" />
+          <FieldInput v={v} setV={setV} name="issuer_name" label="اسم المُصدر" />
           <FieldInput v={v} setV={setV} name="agent_name" label="اسم الوكيل" />
-          <FieldInput v={v} setV={setV} name="issuer_id_number" label="رقم هوية الموكل" />
+          <FieldInput v={v} setV={setV} name="issuer_id_number" label="رقم هوية المُصدر" />
           <FieldInput v={v} setV={setV} name="agent_id_number" label="رقم هوية الوكيل" />
           <FieldInput v={v} setV={setV} name="issue_date" label="تاريخ الإصدار" type="date" />
           <FieldInput v={v} setV={setV} name="expiry_date" label="تاريخ الانتهاء" type="date" />
           <FieldInput v={v} setV={setV} name="issuer_entity" label="جهة الإصدار" />
           <FieldInput v={v} setV={setV} name="usage_method" label="كيفية الاستخدام" />
-          <FieldInput v={v} setV={setV} name="issuer_capacity" label="صفة الموكل" />
-          <FieldInput v={v} setV={setV} name="issuer_nationality" label="جنسية الموكل" />
-          <FieldInput v={v} setV={setV} name="issuer_identity_type" label="نوع هوية الموكل" />
-          <FieldInput v={v} setV={setV} name="issuer_status_in_agency" label="وضع الموكل في الوكالة" />
+          <FieldInput v={v} setV={setV} name="issuer_capacity" label="صفة المُصدر" />
+          <FieldInput v={v} setV={setV} name="issuer_nationality" label="جنسية المُصدر" />
+          <FieldInput v={v} setV={setV} name="issuer_identity_type" label="نوع هوية المُصدر" />
+          <FieldInput v={v} setV={setV} name="issuer_status_in_agency" label="حالة المُصدر في الوكالة" />
           <FieldInput v={v} setV={setV} name="agent_capacity" label="صفة الوكيل" />
           <FieldInput v={v} setV={setV} name="agent_nationality" label="جنسية الوكيل" />
           <FieldInput v={v} setV={setV} name="agent_identity_type" label="نوع هوية الوكيل" />
-          <FieldInput v={v} setV={setV} name="agent_status_in_agency" label="وضع الوكيل في الوكالة" />
+          <FieldInput v={v} setV={setV} name="agent_status_in_agency" label="حالة الوكيل في الوكالة" />
 
           <div className="md:col-span-2">
             <Label className="text-xs font-semibold mb-1.5 block">نطاق / موضوع الوكالة</Label>
             <Textarea value={v.scope ?? ""} onChange={(e) => setV({ ...v, scope: e.target.value })} className="text-right min-h-[70px]" />
+          </div>
+          <div className="md:col-span-2">
+            <Label className="text-xs font-semibold mb-1.5 block">بيانات الوكالة</Label>
+            <Textarea value={v.agency_data ?? ""} onChange={(e) => setV({ ...v, agency_data: e.target.value })} className="text-right min-h-[70px]" />
           </div>
           <div className="md:col-span-2">
             <Label className="text-xs font-semibold mb-1.5 block">بنود الوكالة</Label>
@@ -571,10 +748,6 @@ function PowerDialog({
           <div className="md:col-span-2">
             <Label className="text-xs font-semibold mb-1.5 block">نص الوكالة</Label>
             <Textarea value={v.agency_text ?? ""} onChange={(e) => setV({ ...v, agency_text: e.target.value })} className="text-right min-h-[70px]" />
-          </div>
-          <div className="md:col-span-2">
-            <Label className="text-xs font-semibold mb-1.5 block">بيانات الوكالة</Label>
-            <Textarea value={v.agency_data ?? ""} onChange={(e) => setV({ ...v, agency_data: e.target.value })} className="text-right min-h-[70px]" />
           </div>
           <div className="md:col-span-2">
             <Label className="text-xs font-semibold mb-1.5 block">ملاحظات</Label>
@@ -605,103 +778,5 @@ function FieldInput({ v, setV, name, label, type = "text", required }: {
       </Label>
       <Input type={type} value={v[name] ?? ""} onChange={(e) => setV({ ...v, [name]: e.target.value })} required={required} className="text-right" />
     </div>
-  );
-}
-
-function DetailField({ label, value }: { label: string; value: any }) {
-  if (value == null || value === "") return null;
-  return (
-    <div className="flex flex-col gap-0.5">
-      <span className="text-[11px] text-gold/70 font-semibold">{label}</span>
-      <span className="text-sm text-white/90 whitespace-pre-wrap break-words">{value}</span>
-    </div>
-  );
-}
-
-function PowerDetailDialog({
-  open, onOpenChange, row, clientName, onEdit,
-}: {
-  open: boolean; onOpenChange: (v: boolean) => void;
-  row: PowerRow; clientName?: string; onEdit: () => void;
-}) {
-  return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-3xl max-h-[90vh] overflow-y-auto" dir="rtl">
-        <DialogHeader>
-          <DialogTitle className="text-right text-xl">تفاصيل الوكالة رقم {row.wakalah_number}</DialogTitle>
-          <DialogDescription className="text-right text-xs">جميع بيانات الوكالة القضائية</DialogDescription>
-        </DialogHeader>
-
-        <div className="space-y-6 mt-2">
-          <section className="space-y-3">
-            <h3 className="text-sm font-bold text-gold border-b border-gold/20 pb-1">البيانات الأساسية</h3>
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-              <DetailField label="رقم الوكالة" value={row.wakalah_number} />
-              <DetailField label="جهة الإصدار" value={row.issuer_entity} />
-              <DetailField label="كيفية الاستخدام" value={row.usage_method} />
-              <DetailField label="تاريخ الإصدار" value={row.issue_date} />
-              <DetailField label="تاريخ الانتهاء" value={row.expiry_date} />
-              <DetailField label="الحالة" value={row.status} />
-              {clientName && <DetailField label="العميل المرتبط" value={clientName} />}
-              {row.scope && <DetailField label="نطاق / موضوع الوكالة" value={row.scope} />}
-            </div>
-          </section>
-
-          <section className="space-y-3">
-            <h3 className="text-sm font-bold text-gold border-b border-gold/20 pb-1">بيانات الموكل</h3>
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-              <DetailField label="اسم الموكل" value={row.issuer_name} />
-              <DetailField label="صفة الموكل" value={row.issuer_capacity} />
-              <DetailField label="جنسية الموكل" value={row.issuer_nationality} />
-              <DetailField label="نوع هوية الموكل" value={row.issuer_identity_type} />
-              <DetailField label="رقم هوية الموكل" value={row.issuer_id_number} />
-              <DetailField label="وضع الموكل في الوكالة" value={row.issuer_status_in_agency} />
-            </div>
-          </section>
-
-          <section className="space-y-3">
-            <h3 className="text-sm font-bold text-gold border-b border-gold/20 pb-1">بيانات الوكيل</h3>
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-              <DetailField label="اسم الوكيل" value={row.agent_name} />
-              <DetailField label="صفة الوكيل" value={row.agent_capacity} />
-              <DetailField label="جنسية الوكيل" value={row.agent_nationality} />
-              <DetailField label="نوع هوية الوكيل" value={row.agent_identity_type} />
-              <DetailField label="رقم هوية الوكيل" value={row.agent_id_number} />
-              <DetailField label="وضع الوكيل في الوكالة" value={row.agent_status_in_agency} />
-            </div>
-          </section>
-
-          <section className="space-y-3">
-            <h3 className="text-sm font-bold text-gold border-b border-gold/20 pb-1">بنود الوكالة</h3>
-            <DetailField label="البنود" value={row.agency_clauses} />
-          </section>
-
-          <section className="space-y-3">
-            <h3 className="text-sm font-bold text-gold border-b border-gold/20 pb-1">نص الوكالة</h3>
-            <DetailField label="النص" value={row.agency_text} />
-          </section>
-
-          <section className="space-y-3">
-            <h3 className="text-sm font-bold text-gold border-b border-gold/20 pb-1">بيانات الوكالة</h3>
-            <DetailField label="البيانات" value={row.agency_data} />
-          </section>
-
-          {row.notes && (
-            <section className="space-y-3">
-              <h3 className="text-sm font-bold text-gold border-b border-gold/20 pb-1">ملاحظات</h3>
-              <DetailField label="ملاحظات" value={row.notes} />
-            </section>
-          )}
-        </div>
-
-        <DialogFooter className="gap-2 mt-4">
-          <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>إغلاق</Button>
-          <Button type="button" className="btn-gold gap-2" onClick={onEdit}>
-            <Pencil className="h-4 w-4" />
-            تعديل
-          </Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
   );
 }
