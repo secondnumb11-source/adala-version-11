@@ -56,6 +56,7 @@ const NAV_GROUPS: NavGroup[] = [
     items: [
       { to: "/app", label: "لوحة البيانات الرئيسية", icon: LayoutDashboard, exact: true },
       { to: "/app/cases", label: "إدارة القضايا", icon: Briefcase },
+      { to: "/app/lawsuit-requests", label: "الطلبات على القضايا", icon: FileText },
       { to: "/app/sessions", label: "مواعيد الجلسات", icon: CalendarDays },
       { to: "/app/archive", label: "أرشيف المستندات والأحكام", icon: FolderArchive },
       { to: "/app/execution", label: "طلبات التنفيذ", icon: Workflow },

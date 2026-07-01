@@ -63,7 +63,7 @@ const MAX_ITEMS = 2000;
 
 const PayloadSchema = z
   .object({
-    kind: z.enum(["cases", "powers", "executions", "sessions", "documents", "mixed"]),
+    kind: z.enum(["cases", "powers", "executions", "sessions", "documents", "lawsuit_requests", "mixed"]),
     sourceUrl: z.string().trim().max(1000).optional(),
     documents: z
       .array(
@@ -104,6 +104,19 @@ const PayloadSchema = z
           issue_date: OPT_DATE,
           expiry_date: OPT_DATE,
           scope: OPT_LONG,
+          issuer_entity: OPT_SHORT,
+          usage_method: OPT_SHORT,
+          issuer_capacity: OPT_SHORT,
+          issuer_nationality: OPT_SHORT,
+          issuer_identity_type: OPT_SHORT,
+          issuer_status_in_agency: OPT_SHORT,
+          agent_capacity: OPT_SHORT,
+          agent_nationality: OPT_SHORT,
+          agent_identity_type: OPT_SHORT,
+          agent_status_in_agency: OPT_SHORT,
+          agency_clauses: z.string().trim().max(2000).optional().or(z.literal("").transform(() => undefined)),
+          agency_text: z.string().trim().max(5000).optional().or(z.literal("").transform(() => undefined)),
+          agency_data: z.any().optional(),
         }),
       )
       .max(MAX_ITEMS)
@@ -139,6 +152,73 @@ const PayloadSchema = z
       )
       .max(MAX_ITEMS)
       .optional(),
+    case_details: z.array(z.object({
+      case_number: SHORT,
+      case_classification: OPT_SHORT,
+      case_type_detail: OPT_SHORT,
+      case_date: OPT_DATE,
+      subject_matter: OPT_LONG,
+      plaintiff_requests: z.string().trim().max(5000).optional().or(z.literal("").transform(() => undefined)),
+      case_foundations: z.string().trim().max(5000).optional().or(z.literal("").transform(() => undefined)),
+      court_name: OPT_SHORT,
+      circuit_number: OPT_SHORT,
+      is_draft: z.boolean().optional(),
+    })).max(MAX_ITEMS).optional(),
+    case_parties: z.array(z.object({
+      case_number: OPT_SHORT,
+      party_type: z.enum(["plaintiff", "defendant"]).default("plaintiff"),
+      party_name: OPT_SHORT,
+      party_id_number: OPT_SHORT,
+      party_nationality: OPT_SHORT,
+      party_identity_type: OPT_SHORT,
+      party_capacity: OPT_SHORT,
+      party_status_in_case: OPT_SHORT,
+    })).max(MAX_ITEMS).optional(),
+    case_sessions_detail: z.array(z.object({
+      case_number: OPT_SHORT,
+      session_status: OPT_SHORT,
+      court_name: OPT_SHORT,
+      circuit_number: OPT_SHORT,
+      mechanism: OPT_SHORT,
+      degree: OPT_SHORT,
+      session_date: OPT_DATE,
+      session_time: OPT_SHORT,
+      session_details: z.string().trim().max(1000).optional().or(z.literal("").transform(() => undefined)),
+    })).max(MAX_ITEMS).optional(),
+    case_judgments: z.array(z.object({
+      case_number: OPT_SHORT,
+      judgment_finality: OPT_SHORT,
+      deed_number: OPT_SHORT,
+      deed_date: OPT_DATE,
+      court_name: OPT_SHORT,
+      circuit_number: OPT_SHORT,
+      degree: OPT_SHORT,
+      appeal_deed_date: OPT_DATE,
+      appeal_circuit_number: OPT_SHORT,
+      judgment_details: z.string().trim().max(2000).optional().or(z.literal("").transform(() => undefined)),
+      judgment_document_url: z.string().trim().max(500).optional(),
+    })).max(MAX_ITEMS).optional(),
+    lawsuit_requests: z.array(z.object({
+      case_number: OPT_SHORT,
+      case_date: OPT_DATE,
+      court_name: OPT_SHORT,
+      circuit_number: OPT_SHORT,
+      case_status: OPT_SHORT,
+      case_classification: OPT_SHORT,
+      case_type_detail: OPT_SHORT,
+      applicant_type: OPT_SHORT,
+      applicant_name: OPT_SHORT,
+      request_type: OPT_SHORT,
+      judgment_number: OPT_SHORT,
+      submissions: z.string().trim().max(2000).optional().or(z.literal("").transform(() => undefined)),
+      request_reasons: z.string().trim().max(2000).optional().or(z.literal("").transform(() => undefined)),
+      reason_1: z.string().trim().max(1000).optional().or(z.literal("").transform(() => undefined)),
+      reason_2: z.string().trim().max(1000).optional().or(z.literal("").transform(() => undefined)),
+      reason_3: z.string().trim().max(1000).optional().or(z.literal("").transform(() => undefined)),
+      reason_4: z.string().trim().max(1000).optional().or(z.literal("").transform(() => undefined)),
+      reason_5: z.string().trim().max(1000).optional().or(z.literal("").transform(() => undefined)),
+      reason_6: z.string().trim().max(1000).optional().or(z.literal("").transform(() => undefined)),
+    })).max(MAX_ITEMS).optional(),
   })
   .superRefine((p, ctx) => {
     const counts = {
@@ -147,8 +227,13 @@ const PayloadSchema = z
       executions: p.executions?.length ?? 0,
       sessions: p.sessions?.length ?? 0,
       documents: p.documents?.length ?? 0,
+      case_details: p.case_details?.length ?? 0,
+      case_parties: p.case_parties?.length ?? 0,
+      case_sessions_detail: p.case_sessions_detail?.length ?? 0,
+      case_judgments: p.case_judgments?.length ?? 0,
+      lawsuit_requests: p.lawsuit_requests?.length ?? 0,
     };
-    const total = counts.cases + counts.powers + counts.executions + counts.sessions + counts.documents;
+    const total = counts.cases + counts.powers + counts.executions + counts.sessions + counts.documents + counts.case_details + counts.case_parties + counts.case_sessions_detail + counts.case_judgments + counts.lawsuit_requests;
     if (total === 0) {
       ctx.addIssue({ code: "custom", message: "لا توجد بيانات لحفظها — الحمولة فارغة" });
     }
@@ -398,6 +483,19 @@ export const Route = createFileRoute("/api/public/najiz-sync")({
               issue_date: p.issue_date ?? null,
               expiry_date: p.expiry_date ?? null,
               scope: p.scope ?? null,
+              issuer_entity: p.issuer_entity ?? null,
+              usage_method: p.usage_method ?? null,
+              issuer_capacity: p.issuer_capacity ?? null,
+              issuer_nationality: p.issuer_nationality ?? null,
+              issuer_identity_type: p.issuer_identity_type ?? null,
+              issuer_status_in_agency: p.issuer_status_in_agency ?? null,
+              agent_capacity: p.agent_capacity ?? null,
+              agent_nationality: p.agent_nationality ?? null,
+              agent_identity_type: p.agent_identity_type ?? null,
+              agent_status_in_agency: p.agent_status_in_agency ?? null,
+              agency_clauses: p.agency_clauses ?? null,
+              agency_text: p.agency_text ?? null,
+              agency_data: p.agency_data ?? null,
               najiz_synced_at: new Date().toISOString(),
             }));
             total += rows.length;
@@ -545,6 +643,204 @@ export const Route = createFileRoute("/api/public/najiz-sync")({
               }
             }
             log("documents_done", { affected: rows.length });
+          }
+
+          // ---- CASE DETAILS ----
+          if (payload.case_details?.length) {
+            log("mapping_case_details", { count: payload.case_details.length });
+            const caseNumbers = Array.from(new Set(payload.case_details.map((d) => d.case_number).filter(Boolean) as string[]));
+            let caseMap = new Map<string, string>();
+            if (caseNumbers.length) {
+              const { data: linkedCases } = await (supabaseAdmin as any)
+                .from("cases").select("id, case_number, najiz_id").eq("owner_id", owner_id);
+              caseMap = new Map((linkedCases ?? []).map((c: any) => [c.case_number, c.id]));
+              (linkedCases ?? []).forEach((c: any) => { if (c.najiz_id) caseMap.set(c.najiz_id.replace(/^case_/, ""), c.id); });
+            }
+            const rows = payload.case_details.map((d) => ({
+              owner_id,
+              case_id: d.case_number ? caseMap.get(d.case_number.replace(/\s/g, "")) ?? null : null,
+              case_number: d.case_number?.replace(/\s/g, "") ?? null,
+              case_classification: d.case_classification ?? null,
+              case_type_detail: d.case_type_detail ?? null,
+              case_date: d.case_date ?? null,
+              subject_matter: d.subject_matter ?? null,
+              plaintiff_requests: d.plaintiff_requests ?? null,
+              case_foundations: d.case_foundations ?? null,
+              court_name: d.court_name ?? null,
+              circuit_number: d.circuit_number ?? null,
+              is_draft: d.is_draft ?? false,
+              najiz_synced_at: new Date().toISOString(),
+            }));
+            total += rows.length;
+            if (rows.length) {
+              const { error } = await (supabaseAdmin as any).from("case_details").upsert(rows, { onConflict: "owner_id,case_number", ignoreDuplicates: false });
+              if (error) { log("case_details_upsert_error", error.message); throw new Error(`case_details upsert: ${error.message}`); }
+              inserted += rows.length;
+            }
+            log("case_details_done", { affected: rows.length });
+          }
+
+          // ---- CASE PARTIES ----
+          if (payload.case_parties?.length) {
+            log("mapping_case_parties", { count: payload.case_parties.length });
+            const caseNumbers = Array.from(new Set(payload.case_parties.map((d) => d.case_number).filter(Boolean) as string[]));
+            let caseMap = new Map<string, string>();
+            if (caseNumbers.length) {
+              const { data: linkedCases } = await (supabaseAdmin as any)
+                .from("cases").select("id, case_number, najiz_id").eq("owner_id", owner_id);
+              caseMap = new Map((linkedCases ?? []).map((c: any) => [c.case_number, c.id]));
+              (linkedCases ?? []).forEach((c: any) => { if (c.najiz_id) caseMap.set(c.najiz_id.replace(/^case_/, ""), c.id); });
+            }
+            const rows = payload.case_parties.map((d) => ({
+              owner_id,
+              case_id: d.case_number ? caseMap.get(d.case_number.replace(/\s/g, "")) ?? null : null,
+              case_number: d.case_number?.replace(/\s/g, "") ?? null,
+              party_type: d.party_type ?? "plaintiff",
+              party_name: d.party_name ?? null,
+              party_id_number: d.party_id_number ?? null,
+              party_nationality: d.party_nationality ?? null,
+              party_identity_type: d.party_identity_type ?? null,
+              party_capacity: d.party_capacity ?? null,
+              party_status_in_case: d.party_status_in_case ?? null,
+              najiz_synced_at: new Date().toISOString(),
+            }));
+            total += rows.length;
+            if (rows.length) {
+              const caseIds = Array.from(new Set(rows.map((r) => r.case_id).filter(Boolean) as string[]));
+              if (caseIds.length) {
+                await (supabaseAdmin as any).from("case_parties").delete().eq("owner_id", owner_id).in("case_id", caseIds);
+              }
+              const { error } = await (supabaseAdmin as any).from("case_parties").insert(rows);
+              if (error) { log("case_parties_insert_error", error.message); throw new Error(`case_parties insert: ${error.message}`); }
+              inserted += rows.length;
+            }
+            log("case_parties_done", { affected: rows.length });
+          }
+
+          // ---- CASE SESSIONS DETAIL ----
+          if (payload.case_sessions_detail?.length) {
+            log("mapping_case_sessions_detail", { count: payload.case_sessions_detail.length });
+            const caseNumbers = Array.from(new Set(payload.case_sessions_detail.map((d) => d.case_number).filter(Boolean) as string[]));
+            let caseMap = new Map<string, string>();
+            if (caseNumbers.length) {
+              const { data: linkedCases } = await (supabaseAdmin as any)
+                .from("cases").select("id, case_number, najiz_id").eq("owner_id", owner_id);
+              caseMap = new Map((linkedCases ?? []).map((c: any) => [c.case_number, c.id]));
+              (linkedCases ?? []).forEach((c: any) => { if (c.najiz_id) caseMap.set(c.najiz_id.replace(/^case_/, ""), c.id); });
+            }
+            const rows = payload.case_sessions_detail.map((d) => ({
+              owner_id,
+              case_id: d.case_number ? caseMap.get(d.case_number.replace(/\s/g, "")) ?? null : null,
+              case_number: d.case_number?.replace(/\s/g, "") ?? null,
+              session_status: d.session_status ?? null,
+              court_name: d.court_name ?? null,
+              circuit_number: d.circuit_number ?? null,
+              mechanism: d.mechanism ?? null,
+              degree: d.degree ?? null,
+              session_date: d.session_date ?? null,
+              session_time: d.session_time ?? null,
+              session_details: d.session_details ?? null,
+              najiz_synced_at: new Date().toISOString(),
+            }));
+            total += rows.length;
+            if (rows.length) {
+              const caseIds = Array.from(new Set(rows.map((r) => r.case_id).filter(Boolean) as string[]));
+              if (caseIds.length) {
+                await (supabaseAdmin as any).from("case_sessions_detail").delete().eq("owner_id", owner_id).in("case_id", caseIds);
+              }
+              const { error } = await (supabaseAdmin as any).from("case_sessions_detail").insert(rows);
+              if (error) { log("case_sessions_detail_insert_error", error.message); throw new Error(`case_sessions_detail insert: ${error.message}`); }
+              inserted += rows.length;
+            }
+            log("case_sessions_detail_done", { affected: rows.length });
+          }
+
+          // ---- CASE JUDGMENTS ----
+          if (payload.case_judgments?.length) {
+            log("mapping_case_judgments", { count: payload.case_judgments.length });
+            const caseNumbers = Array.from(new Set(payload.case_judgments.map((d) => d.case_number).filter(Boolean) as string[]));
+            let caseMap = new Map<string, string>();
+            if (caseNumbers.length) {
+              const { data: linkedCases } = await (supabaseAdmin as any)
+                .from("cases").select("id, case_number, najiz_id").eq("owner_id", owner_id);
+              caseMap = new Map((linkedCases ?? []).map((c: any) => [c.case_number, c.id]));
+              (linkedCases ?? []).forEach((c: any) => { if (c.najiz_id) caseMap.set(c.najiz_id.replace(/^case_/, ""), c.id); });
+            }
+            const rows = payload.case_judgments.map((d) => ({
+              owner_id,
+              case_id: d.case_number ? caseMap.get(d.case_number.replace(/\s/g, "")) ?? null : null,
+              case_number: d.case_number?.replace(/\s/g, "") ?? null,
+              judgment_finality: d.judgment_finality ?? null,
+              deed_number: d.deed_number ?? null,
+              deed_date: d.deed_date ?? null,
+              court_name: d.court_name ?? null,
+              circuit_number: d.circuit_number ?? null,
+              degree: d.degree ?? null,
+              appeal_deed_date: d.appeal_deed_date ?? null,
+              appeal_circuit_number: d.appeal_circuit_number ?? null,
+              judgment_details: d.judgment_details ?? null,
+              judgment_document_url: d.judgment_document_url ?? null,
+              najiz_synced_at: new Date().toISOString(),
+            }));
+            total += rows.length;
+            if (rows.length) {
+              const caseIds = Array.from(new Set(rows.map((r) => r.case_id).filter(Boolean) as string[]));
+              if (caseIds.length) {
+                await (supabaseAdmin as any).from("case_judgments").delete().eq("owner_id", owner_id).in("case_id", caseIds);
+              }
+              const { error } = await (supabaseAdmin as any).from("case_judgments").insert(rows);
+              if (error) { log("case_judgments_insert_error", error.message); throw new Error(`case_judgments insert: ${error.message}`); }
+              inserted += rows.length;
+            }
+            log("case_judgments_done", { affected: rows.length });
+          }
+
+          // ---- LAWSUIT REQUESTS ----
+          if (payload.lawsuit_requests?.length) {
+            log("mapping_lawsuit_requests", { count: payload.lawsuit_requests.length });
+            const caseNumbers = Array.from(new Set(payload.lawsuit_requests.map((d) => d.case_number).filter(Boolean) as string[]));
+            let caseMap = new Map<string, string>();
+            if (caseNumbers.length) {
+              const { data: linkedCases } = await (supabaseAdmin as any)
+                .from("cases").select("id, case_number, najiz_id").eq("owner_id", owner_id);
+              caseMap = new Map((linkedCases ?? []).map((c: any) => [c.case_number, c.id]));
+              (linkedCases ?? []).forEach((c: any) => { if (c.najiz_id) caseMap.set(c.najiz_id.replace(/^case_/, ""), c.id); });
+            }
+            const rows = payload.lawsuit_requests.map((d) => ({
+              owner_id,
+              case_id: d.case_number ? caseMap.get(d.case_number.replace(/\s/g, "")) ?? null : null,
+              case_number: d.case_number?.replace(/\s/g, "") ?? null,
+              case_date: d.case_date ?? null,
+              court_name: d.court_name ?? null,
+              circuit_number: d.circuit_number ?? null,
+              case_status: d.case_status ?? null,
+              case_classification: d.case_classification ?? null,
+              case_type_detail: d.case_type_detail ?? null,
+              applicant_type: d.applicant_type ?? null,
+              applicant_name: d.applicant_name ?? null,
+              request_type: d.request_type ?? null,
+              judgment_number: d.judgment_number ?? null,
+              submissions: d.submissions ?? null,
+              request_reasons: d.request_reasons ?? null,
+              reason_1: d.reason_1 ?? null,
+              reason_2: d.reason_2 ?? null,
+              reason_3: d.reason_3 ?? null,
+              reason_4: d.reason_4 ?? null,
+              reason_5: d.reason_5 ?? null,
+              reason_6: d.reason_6 ?? null,
+              najiz_synced_at: new Date().toISOString(),
+            }));
+            total += rows.length;
+            if (rows.length) {
+              const caseIds = Array.from(new Set(rows.map((r) => r.case_id).filter(Boolean) as string[]));
+              if (caseIds.length) {
+                await (supabaseAdmin as any).from("lawsuit_requests").delete().eq("owner_id", owner_id).in("case_id", caseIds);
+              }
+              const { error } = await (supabaseAdmin as any).from("lawsuit_requests").insert(rows);
+              if (error) { log("lawsuit_requests_insert_error", error.message); throw new Error(`lawsuit_requests insert: ${error.message}`); }
+              inserted += rows.length;
+            }
+            log("lawsuit_requests_done", { affected: rows.length });
           }
 
 

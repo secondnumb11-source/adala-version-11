@@ -6,7 +6,9 @@ type TableName =
   | "cases" | "clients" | "employees" | "powers_of_attorney"
   | "executions" | "tasks" | "sessions" | "documents"
   | "client_notifications" | "portal_messages" | "najiz_sync_logs"
-  | "sync_tokens";
+  | "sync_tokens"
+  | "case_details" | "case_parties" | "case_sessions_detail"
+  | "case_judgments" | "lawsuit_requests";
 
 export function useList<T = any>(table: TableName, orderBy = "created_at", asc = false) {
   return useQuery({

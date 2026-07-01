@@ -114,12 +114,16 @@
   async function autoScrollFull() {
     try {
       const vh = window.innerHeight;
-      const step = Math.max(400, Math.floor(vh * 0.9));
-      const DELAY = 160;          // كان 350ms
-      const MAX_STEPS = 40;       // كان 80
-      const STABLE_THRESHOLD = 2; // كان 4
+      const step = Math.max(300, Math.floor(vh * 0.7));
+      const DELAY = 250;
+      const MAX_STEPS = 60;
+      const STABLE_THRESHOLD = 3;
+      
+      // Phase 1: Scroll to top first
       window.scrollTo({ top: 0, behavior: "instant" });
-      await sleep(150);
+      await sleep(200);
+      
+      // Phase 2: Scroll down slowly to trigger lazy loading
       let lastHeight = -1, stable = 0;
       for (let i = 0; i < MAX_STEPS; i++) {
         const y = (i + 1) * step;
@@ -130,11 +134,32 @@
         else { stable++; if (stable >= STABLE_THRESHOLD) break; }
         if (y > h + vh) break;
       }
-      await sleep(250);
-      await tryLoadMore();
-      // الرجوع للأعلى مباشرة بدون تمرير متدرج
+      await sleep(300);
+      
+      // Phase 3: Scroll back to top
       window.scrollTo({ top: 0, behavior: "instant" });
-      await sleep(150);
+      await sleep(200);
+      
+      // Phase 4: Scroll down again slowly to ensure all content rendered
+      lastHeight = -1; stable = 0;
+      for (let i = 0; i < MAX_STEPS; i++) {
+        const y = (i + 1) * step;
+        window.scrollTo({ top: y, behavior: "instant" });
+        await sleep(DELAY);
+        const h = document.documentElement.scrollHeight;
+        if (h > lastHeight + 50) { stable = 0; lastHeight = h; }
+        else { stable++; if (stable >= STABLE_THRESHOLD) break; }
+        if (y > h + vh) break;
+      }
+      await sleep(300);
+      
+      // Phase 5: Try to click "load more" buttons
+      await tryLoadMore();
+      await sleep(300);
+      
+      // Phase 6: Final scroll to top
+      window.scrollTo({ top: 0, behavior: "instant" });
+      await sleep(200);
     } catch (e) { console.warn("[adala] scroll failed", e); }
   }
 
@@ -1545,6 +1570,84 @@
     return fields;
   }
 
+  async function clickSidebarTab(label) {
+    const tabs = $all("[class*='tab'], [class*='nav-item'], [role='tab'], button, a, li, [class*='menu-item'], [class*='sidebar'] [class*='item']");
+    for (const tab of tabs) {
+      const t = clean(tab.textContent || tab.innerText || "");
+      if (!t || t.length > 60) continue;
+      if (t.includes(label)) {
+        try {
+          tab.click();
+          await sleep(1500);
+          await autoScrollFull();
+          return true;
+        } catch {}
+      }
+    }
+    return false;
+  }
+
+  function scrapeSidebarContent(sectionLabel) {
+    const result = { section: sectionLabel };
+    
+    if (sectionLabel.includes("أطراف الدعوي") || sectionLabel.includes("أطراف الدعوى")) {
+      const plaintiffs = [];
+      const defendants = [];
+      $all("table").forEach((table) => {
+        const headers = $all("thead th, thead td, tr:first-child th, tr:first-child td", table).map(text);
+        const rows = $all("tbody tr", table).length ? $all("tbody tr", table) : $all("tr", table);
+        rows.forEach((row, i) => {
+          if (i === 0 && $all("th", row).length && !$all("td", row).length) return;
+          const cells = $all("td, th", row).map(text);
+          if (cells.length < 2) return;
+          const party = {};
+          cells.forEach((v, j) => {
+            const h = headers[j] || "";
+            if (/الاسم|اسم\s*الخصم|اسم\s*الطرف/.test(h)) party.name = v;
+            if (/الجنسية|جنسية/.test(h)) party.nationality = v;
+            if (/نوع\s*الهوية|نوع\s*التعريف/.test(h)) party.id_type = v;
+            if (/رقم\s*الهوية|رقم\s*التعريف|رقم\s*السجل/.test(h)) party.id_number = v;
+            if (/الصفة|صفة\s*الخصم/.test(h)) party.capacity = v;
+            if (/الوكالة|حالة\s*الوكالة/.test(h)) party.poa_status = v;
+          });
+          if (party.name || party.id_number) {
+            const rowText = cells.join(" ");
+            if (/مدعي\s*عليه|مدعى\s*عليه/.test(rowText)) defendants.push(party);
+            else plaintiffs.push(party);
+          }
+        });
+      });
+      if (plaintiffs.length === 0 && defendants.length === 0) {
+        const allParties = scrapeCaseParties();
+        for (const p of allParties) {
+          if (p.party_role === "defendant") defendants.push(p);
+          else plaintiffs.push(p);
+        }
+      }
+      result.plaintiffs = plaintiffs;
+      result.defendants = defendants;
+      return result;
+    }
+    
+    if (sectionLabel.includes("الجلسات")) {
+      result.sessions = scrapeCaseSessionsDetail();
+      return result;
+    }
+    
+    if (sectionLabel.includes("الأحكام") || sectionLabel.includes("الاحكام")) {
+      result.judgments = scrapeCaseJudgments();
+      return result;
+    }
+    
+    if (sectionLabel.includes("الطلبات")) {
+      result.requests = scrapeLawsuitRequests();
+      return result;
+    }
+    
+    result.fields = scrapeDetailPage();
+    return result;
+  }
+
   // =====================================================
   // API الرئيسي — sccrape() يُرجع payload بصيغة /api/public/najiz-sync
   // =====================================================
@@ -1561,6 +1664,8 @@
     scrapeCaseJudgments,
     scrapeLawsuitRequests,
     scrapePowerDetail,
+    clickSidebarTab,
+    scrapeSidebarContent,
 
     async scrape(kindFilter) {
       console.log("[منصة العدالة] بدء السحب — kindFilter:", kindFilter, "URL:", location.href);
