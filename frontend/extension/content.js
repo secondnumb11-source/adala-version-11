@@ -114,12 +114,16 @@
   async function autoScrollFull() {
     try {
       const vh = window.innerHeight;
-      const step = Math.max(400, Math.floor(vh * 0.9));
-      const DELAY = 160;          // كان 350ms
-      const MAX_STEPS = 40;       // كان 80
-      const STABLE_THRESHOLD = 2; // كان 4
+      const step = Math.max(300, Math.floor(vh * 0.7));
+      const DELAY = 250;
+      const MAX_STEPS = 60;
+      const STABLE_THRESHOLD = 3;
+      
+      // Phase 1: Scroll to top first
       window.scrollTo({ top: 0, behavior: "instant" });
-      await sleep(150);
+      await sleep(200);
+      
+      // Phase 2: Scroll down slowly to trigger lazy loading
       let lastHeight = -1, stable = 0;
       for (let i = 0; i < MAX_STEPS; i++) {
         const y = (i + 1) * step;
@@ -130,11 +134,32 @@
         else { stable++; if (stable >= STABLE_THRESHOLD) break; }
         if (y > h + vh) break;
       }
-      await sleep(250);
-      await tryLoadMore();
-      // الرجوع للأعلى مباشرة بدون تمرير متدرج
+      await sleep(300);
+      
+      // Phase 3: Scroll back to top
       window.scrollTo({ top: 0, behavior: "instant" });
-      await sleep(150);
+      await sleep(200);
+      
+      // Phase 4: Scroll down again slowly to ensure all content rendered
+      lastHeight = -1; stable = 0;
+      for (let i = 0; i < MAX_STEPS; i++) {
+        const y = (i + 1) * step;
+        window.scrollTo({ top: y, behavior: "instant" });
+        await sleep(DELAY);
+        const h = document.documentElement.scrollHeight;
+        if (h > lastHeight + 50) { stable = 0; lastHeight = h; }
+        else { stable++; if (stable >= STABLE_THRESHOLD) break; }
+        if (y > h + vh) break;
+      }
+      await sleep(300);
+      
+      // Phase 5: Try to click "load more" buttons
+      await tryLoadMore();
+      await sleep(300);
+      
+      // Phase 6: Final scroll to top
+      window.scrollTo({ top: 0, behavior: "instant" });
+      await sleep(200);
     } catch (e) { console.warn("[adala] scroll failed", e); }
   }
 
@@ -1031,6 +1056,723 @@
   }
 
   // =====================================================
+  // ماسحات متقدمة لبيانات ناجز التفصيلية
+  // =====================================================
+
+  function _extractFieldValue(label) {
+    const re = new RegExp(label.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") + "\\s*[:\\-–]?\\s*([^\\n|،]{2,300})");
+    const pageText = clean(document.body.innerText || "");
+    const m = pageText.match(re);
+    return m ? clean(m[1]) : undefined;
+  }
+
+  function _findValueByLabel(labels) {
+    for (const lbl of labels) {
+      const candidates = $all("[class*='label'], [class*='key'], [class*='title'], label, dt, strong, b, th, .lbl");
+      for (const el of candidates) {
+        const t = clean(el.textContent);
+        if (!t || t.length > 80) continue;
+        if (!labels.some((l) => t.includes(l))) continue;
+        const parent = el.closest("[class*='field'], [class*='row'], [class*='item'], [class*='col-'], [class*='card'], tr, [class*='detail'], [class*='info'], [class*='form']");
+        if (parent) {
+          const valueEl = parent.querySelector("[class*='value'], [class*='val'], [class*='data'], [class*='content'], dd, .value, .data");
+          if (valueEl && valueEl !== el) {
+            const v = clean(valueEl.textContent);
+            if (v && v !== t) return v;
+          }
+          const allText = clean(parent.innerText || "");
+          const afterColon = allText.split(/[:：]/);
+          if (afterColon.length >= 2) {
+            const val = clean(afterColon.slice(1).join(":"));
+            if (val && val !== t && val.length < 500) return val;
+          }
+          const siblings = parent.children;
+          if (siblings.length >= 2) {
+            for (let i = 0; i < siblings.length; i++) {
+              if (siblings[i] === el || siblings[i].contains(el)) {
+                for (let j = i + 1; j < siblings.length; j++) {
+                  const sv = clean(siblings[j].textContent);
+                  if (sv && sv !== t && sv.length < 500) return sv;
+                }
+              }
+            }
+          }
+        }
+        const sib = el.nextElementSibling;
+        if (sib) {
+          const sv = clean(sib.textContent);
+          if (sv && sv !== t && sv.length < 500) return sv;
+        }
+      }
+      const direct = _extractFieldValue(lbl);
+      if (direct) return direct;
+    }
+    return undefined;
+  }
+
+  function scrapeCaseDetailFields() {
+    const fields = {};
+    const pageText = document.body.innerText || "";
+
+    // Extract case number from URL or page
+    fields.case_number = _findValueByLabel(["رقم القضية", "رقم الدعوى", "رقم الملف"]) ||
+      (pageText.match(/(\d{4}\s*\/\s*\d{3,})/) || [])[1]?.replace(/\s/g, "") ||
+      (location.pathname.match(/(\d{4,})/) || [])[1];
+
+    // Extract basic fields using multiple strategies
+    fields.case_classification = _findValueByLabel(["تصنيف القضية", "التصنيف"]);
+    fields.case_type_detail = _findValueByLabel(["نوع القضية", "نوع الدعوى"]);
+    fields.case_date = _findValueByLabel(["تاريخ القضية", "تاريخ الدعوى", "تاريخ القيد", "تاريخ الإيداع"]);
+    fields.subject_matter = _findValueByLabel(["موضوع الدعوي", "موضوع الدعوى", "موضوع القضية"]);
+    fields.plaintiff_requests = _findValueByLabel(["طلبات المدعي", "طلبات المدّعي"]);
+    fields.case_foundations = _findValueByLabel(["أسانيد الدعوي", "أسانيد الدعوى", "أسس الدعوى"]);
+    fields.court_name = _findValueByLabel(["اسم المحكمة", "المحكمة"]);
+    fields.circuit_number = _findValueByLabel(["الدائرة", "رقم الدائرة"]);
+
+    // Strategy 1: dt/dd pairs
+    $all("dt").forEach((dt) => {
+      const label = clean(dt.textContent);
+      const dd = dt.nextElementSibling;
+      if (!dd || dd.tagName !== "DD") return;
+      const value = clean(dd.textContent);
+      if (!label || !value) return;
+      if (/تصنيف/.test(label)) fields.case_classification = fields.case_classification || value;
+      if (/نوع\s*القضية|نوع\s*الدعوى/.test(label)) fields.case_type_detail = fields.case_type_detail || value;
+      if (/تاريخ\s*القضية|تاريخ\s*الدعوى/.test(label)) fields.case_date = fields.case_date || value;
+      if (/موضوع/.test(label)) fields.subject_matter = fields.subject_matter || value;
+      if (/طلبات\s*المدعي/.test(label)) fields.plaintiff_requests = fields.plaintiff_requests || value;
+      if (/أسانيد|أسس\s*الدعوى/.test(label)) fields.case_foundations = fields.case_foundations || value;
+      if (/المحكمة/.test(label)) fields.court_name = fields.court_name || value;
+      if (/الدائرة/.test(label)) fields.circuit_number = fields.circuit_number || value;
+    });
+
+    // Strategy 2: table rows with 2 cells
+    $all("table").forEach((table) => {
+      $all("tr", table).forEach((row) => {
+        const cells = $all("td, th", row).map(text);
+        if (cells.length === 2 && cells[0].length < 60 && cells[1]) {
+          const l = cells[0], v = cells[1];
+          if (/تصنيف/.test(l)) fields.case_classification = fields.case_classification || v;
+          if (/نوع\s*القضية|نوع\s*الدعوى/.test(l)) fields.case_type_detail = fields.case_type_detail || v;
+          if (/تاريخ\s*القضية|تاريخ\s*الدعوى/.test(l)) fields.case_date = fields.case_date || v;
+          if (/موضوع/.test(l)) fields.subject_matter = fields.subject_matter || v;
+          if (/طلبات\s*المدعي/.test(l)) fields.plaintiff_requests = fields.plaintiff_requests || v;
+          if (/أسانيد/.test(l)) fields.case_foundations = fields.case_foundations || v;
+          if (/المحكمة/.test(l)) fields.court_name = fields.court_name || v;
+          if (/الدائرة/.test(l)) fields.circuit_number = fields.circuit_number || v;
+        }
+      });
+    });
+
+    // Strategy 3: Angular/Najiz specific - look for field containers
+    $all("[class*='field'], [class*='form-row'], [class*='detail'], [class*='info-row'], [class*='label-value']").forEach((row) => {
+      if (row.children.length < 2 || row.children.length > 6) return;
+      const t = clean(row.innerText || "");
+      if (t.length > 300) return;
+      
+      const labelEl = row.querySelector("[class*='label'], label, .lbl, dt, .title, .key, strong, b");
+      const valueEl = row.querySelector("[class*='value'], [class*='val'], dd, .data, .content");
+      
+      if (labelEl && valueEl) {
+        const label = clean(labelEl.textContent);
+        const value = clean(valueEl.textContent);
+        if (label && value && label !== value) {
+          if (/تصنيف/.test(label)) fields.case_classification = fields.case_classification || value;
+          if (/نوع\s*القضية|نوع\s*الدعوى/.test(label)) fields.case_type_detail = fields.case_type_detail || value;
+          if (/تاريخ\s*القضية|تاريخ\s*الدعوى/.test(label)) fields.case_date = fields.case_date || value;
+          if (/موضوع/.test(label)) fields.subject_matter = fields.subject_matter || value;
+          if (/طلبات\s*المدعي/.test(label)) fields.plaintiff_requests = fields.plaintiff_requests || value;
+          if (/أسانيد|أسس\s*الدعوى/.test(label)) fields.case_foundations = fields.case_foundations || value;
+          if (/المحكمة/.test(label)) fields.court_name = fields.court_name || value;
+          if (/الدائرة/.test(label)) fields.circuit_number = fields.circuit_number || value;
+        }
+      }
+    });
+
+    // Strategy 4: Extract from page text using regex patterns
+    const extractFromText = (pattern, fieldName) => {
+      const match = pageText.match(pattern);
+      if (match && match[1]) {
+        fields[fieldName] = fields[fieldName] || clean(match[1]);
+      }
+    };
+
+    extractFromText(/تصنيف\s*القضية\s*[:\-]?\s*([^\n|،]{2,60})/, "case_classification");
+    extractFromText(/نوع\s*القضية\s*[:\-]?\s*([^\n|،]{2,60})/, "case_type_detail");
+    extractFromText(/تاريخ\s*القضية\s*[:\-]?\s*([^\n|،]{2,60})/, "case_date");
+    extractFromText(/موضوع\s*الدعوى?\s*[:\-]?\s*([^\n]{2,500})/, "subject_matter");
+    extractFromText(/طلبات\s*المدعي\s*[:\-]?\s*([^\n]{2,500})/, "plaintiff_requests");
+    extractFromText(/أسانيد\s*الدعوى?\s*[:\-]?\s*([^\n]{2,500})/, "case_foundations");
+    extractFromText(/(?:اسم\s*)?المحكمة\s*[:\-]?\s*([^\n|،]{2,60})/, "court_name");
+    extractFromText(/(?:رقم\s*)?الدائرة\s*[:\-]?\s*([^\n|،]{1,30})/, "circuit_number");
+
+    return fields;
+  }
+
+  function scrapeCaseParties() {
+    const parties = [];
+
+    function _extractPartyFromRow(cells) {
+      const party = {};
+      const matchKey = (t) => {
+        const c = clean(t);
+        if (/الصفة|صفة\s*الخصم/.test(c)) return "party_role";
+        if (/الاسم|اسم\s*الخصم|اسم\s*الطرف/.test(c)) return "name";
+        if (/الجنسية|جنسية/.test(c)) return "nationality";
+        if (/نوع\s*الهوية|نوع\s*التعريف|نوع\s*الوثيقة/.test(c)) return "id_type";
+        if (/رقم\s*الهوية|رقم\s*التعريف|رقم\s*السجل/.test(c)) return "id_number";
+        if (/الصفة\s*في\s*الدعوى|صفة\s*المدعي|صفة\s*الوكيل|الصفة\s*القانونية/.test(c)) return "capacity";
+        if (/الوكالة|حالة\s*الوكالة|وكالة/.test(c)) return "poa_status";
+        return null;
+      };
+      return matchKey;
+    }
+
+    function _extractPartyFromText(t) {
+      const party = {};
+      const nameMatch = t.match(/(?:الاسم|اسم)\s*[:\-]?\s*([^\n|،]{2,80})/);
+      if (nameMatch) party.name = clean(nameMatch[1]);
+      const natMatch = t.match(/(?:الجنسية|جنسية)\s*[:\-]?\s*([^\n|،]{2,40})/);
+      if (natMatch) party.nationality = clean(natMatch[1]);
+      const idTypeMatch = t.match(/(?:نوع\s*(?:الهوية|التعريف|الوثيقة))\s*[:\-]?\s*([^\n|،]{2,40})/);
+      if (idTypeMatch) party.id_type = clean(idTypeMatch[1]);
+      const idNumMatch = t.match(/(?:رقم\s*(?:الهوية|التعريف|السجل))\s*[:\-]?\s*(\d{6,15})/);
+      if (idNumMatch) party.id_number = clean(idNumMatch[1]);
+      const capMatch = t.match(/(?:الصفة\s*(?:في\s*الدعوى|القانونية)?|صفة)\s*[:\-]?\s*([^\n|،]{2,40})/);
+      if (capMatch) party.capacity = clean(capMatch[1]);
+      const poaMatch = t.match(/(?:الوكالة|حالة\s*الوكالة)\s*[:\-]?\s*([^\n|،]{2,40})/);
+      if (poaMatch) party.poa_status = clean(poaMatch[1]);
+      return party;
+    }
+
+    $all("table").forEach((table) => {
+      const headers = $all("thead th, thead td, tr:first-child th, tr:first-child td", table).map(text);
+      const hasPartyHeader = headers.some((h) => /الاسم|الصفة|المدعي|المدعي\s*عليه|الهوية|الجنسية/.test(h));
+      if (!hasPartyHeader) return;
+      const matchKey = _extractPartyFromRow();
+      const colKeys = headers.map(matchKey);
+      const rows = $all("tbody tr", table).length ? $all("tbody tr", table) : $all("tr", table);
+      rows.forEach((row, i) => {
+        if (i === 0 && $all("th", row).length && !$all("td", row).length) return;
+        const cells = $all("td, th", row).map(text);
+        if (cells.length < 2) return;
+        const party = {};
+        cells.forEach((v, j) => { const k = colKeys[j]; if (k && v) party[k] = v; });
+        if (!party.name && !party.id_number) return;
+        parties.push(party);
+      });
+    });
+
+    const partiesSection = [];
+    $all("[class*='party'], [class*='parties'], [class*='خصم'], [class*='طرف'], [class*='litigant']").forEach((el) => {
+      partiesSection.push(el);
+    });
+    if (partiesSection.length === 0) {
+      $all("div, section").forEach((el) => {
+        const t = clean(el.innerText || "");
+        if (t.length > 2000 || t.length < 10) return;
+        if (/أطراف\s*الدعوي|أطراف\s*الدعوى/.test(t) && /المدعي|المدعي\s*عليه/.test(t)) {
+          partiesSection.push(el);
+        }
+      });
+    }
+    partiesSection.forEach((section) => {
+      const items = section.querySelectorAll("[class*='item'], [class*='row'], tr, li, [class*='card'], [class*='entry']");
+      const targets = items.length ? Array.from(items) : [section];
+      targets.forEach((item) => {
+        const t = clean(item.innerText || "");
+        if (!t || t.length < 5 || t.length > 500) return;
+        if (!/المدعي|المدعي\s*عليه|خصم|طرف/.test(t)) return;
+        const party = _extractPartyFromText(t);
+        if (/مدعي\s*عليه|مدعى\s*عليه/.test(t)) party.party_role = "defendant";
+        else if (/مدعي$|مدعي\s/.test(t) || /plaintiff/i.test(t)) party.party_role = "plaintiff";
+        if (party.name || party.id_number) {
+          const exists = parties.some((p) => p.name === party.name && p.id_number === party.id_number);
+          if (!exists) parties.push(party);
+        }
+      });
+    });
+
+    return parties;
+  }
+
+  function scrapeCaseSessionsDetail() {
+    const sessions = [];
+
+    $all("table").forEach((table) => {
+      const headers = $all("thead th, thead td, tr:first-child th, tr:first-child td", table).map(text);
+      const hasSessionHeader = headers.some((h) => /الجلسة|التاريخ|الوقت|المحكمة|الدائرة|حالة|الدرجة|الية/.test(h));
+      if (!hasSessionHeader) return;
+      const matchKey = (t) => {
+        const c = clean(t);
+        if (/حالة\s*الجلسة|حالة/.test(c)) return "session_status";
+        if (/المحكمة|اسم\s*المحكمة/.test(c)) return "court_name";
+        if (/الدائرة|رقم\s*الدائرة/.test(c)) return "circuit_number";
+        if (/الية|آلية|الية\s*الانعقاد/.test(c)) return "mechanism";
+        if (/الدرجة|درجة/.test(c)) return "degree";
+        if (/التاريخ|تاريخ\s*الجلسة/.test(c)) return "session_date";
+        if (/الوقت|وقت\s*الجلسة/.test(c)) return "session_time";
+        if (/التفاصيل|تفاصيل\s*الجلسة/.test(c)) return "session_details";
+        return null;
+      };
+      const colKeys = headers.map(matchKey);
+      const rows = $all("tbody tr", table).length ? $all("tbody tr", table) : $all("tr", table);
+      rows.forEach((row, i) => {
+        if (i === 0 && $all("th", row).length && !$all("td", row).length) return;
+        const cells = $all("td, th", row).map(text);
+        if (cells.length < 2) return;
+        const s = {};
+        cells.forEach((v, j) => { const k = colKeys[j]; if (k && v) s[k] = v; });
+        if (s.session_date) s.session_date = parseDateISO(s.session_date) || s.session_date;
+        if (s.session_date || s.session_status) sessions.push(s);
+      });
+    });
+
+    $all("dt").forEach((dt) => {
+      const label = clean(dt.textContent);
+      const dd = dt.nextElementSibling;
+      if (!dd || dd.tagName !== "DD") return;
+      const value = clean(dd.textContent);
+      if (!label || !value) return;
+    });
+
+    const sessionContainers = [];
+    $all("[class*='session'], [class*='hearing'], [class*='جلسة']").forEach((el) => sessionContainers.push(el));
+    if (sessionContainers.length === 0) {
+      $all("div, section").forEach((el) => {
+        const t = clean(el.innerText || "");
+        if (t.length > 2000 || t.length < 10) return;
+        if (/الجلسات/.test(t) && /التاريخ|المحكمة|الدرجة/.test(t)) sessionContainers.push(el);
+      });
+    }
+    sessionContainers.forEach((container) => {
+      const items = container.querySelectorAll("[class*='item'], [class*='row'], tr, li, [class*='card'], [class*='entry']");
+      const targets = items.length ? Array.from(items) : [container];
+      targets.forEach((item) => {
+        const t = clean(item.innerText || "");
+        if (!t || t.length < 5 || t.length > 600) return;
+        if (!/جلسة|التاريخ|المحكمة/.test(t)) return;
+        const s = {};
+        const statusMatch = t.match(/(?:حالة\s*الجلسة|حالة\s*الجلس)\s*[:\-]?\s*([^\n|،]{2,40})/);
+        if (statusMatch) s.session_status = clean(statusMatch[1]);
+        const courtMatch = t.match(/(?:المحكمة|اسم\s*المحكمة)\s*[:\-]?\s*([^\n|،]{2,60})/);
+        if (courtMatch) s.court_name = clean(courtMatch[1]);
+        const circuitMatch = t.match(/(?:الدائرة|رقم\s*الدائرة)\s*[:\-]?\s*([^\n|،]{1,30})/);
+        if (circuitMatch) s.circuit_number = clean(circuitMatch[1]);
+        const mechMatch = t.match(/(?:الية|آلية)\s*(?:الانعقاد)?\s*[:\-]?\s*([^\n|،]{2,40})/);
+        if (mechMatch) s.mechanism = clean(mechMatch[1]);
+        const degMatch = t.match(/(?:الدرجة)\s*[:\-]?\s*([^\n|،]{1,20})/);
+        if (degMatch) s.degree = clean(degMatch[1]);
+        const dateMatch = t.match(/(?:التاريخ|تاريخ\s*الجلسة)\s*[:\-]?\s*(\d{1,2}[\/\-]\d{1,2}[\/\-]\d{4}|\d{4}[\/\-]\d{1,2}[\/\-]\d{1,2}|\d{1,2}[\/\-]\d{1,2}[\/\-]14\d{2})/);
+        if (dateMatch) s.session_date = parseDateISO(dateMatch[1]) || dateMatch[1];
+        const timeMatch = t.match(/(?:الوقت)\s*[:\-]?\s*(\d{1,2}:\d{2}(?:\s*[صم])?)/);
+        if (timeMatch) s.session_time = clean(timeMatch[1]);
+        const detMatch = t.match(/(?:تفاصيل|تفاصيل\s*الجلسة)\s*[:\-]?\s*([^\n]{2,300})/);
+        if (detMatch) s.session_details = clean(detMatch[1]);
+        if (s.session_date || s.session_status) {
+          const exists = sessions.some((ex) => ex.session_date === s.session_date && ex.court_name === s.court_name);
+          if (!exists) sessions.push(s);
+        }
+      });
+    });
+
+    return sessions;
+  }
+
+  function scrapeCaseJudgments() {
+    const judgments = [];
+
+    $all("table").forEach((table) => {
+      const headers = $all("thead th, thead td, tr:first-child th, tr:first-child td", table).map(text);
+      const hasJudgmentHeader = headers.some((h) => /الصك|الحكم|نهائي|الدائرة|الدرجة|المحكمة|تاريخ\s*الصك|تاريخ\s*الحكم/.test(h));
+      if (!hasJudgmentHeader) return;
+      const matchKey = (t) => {
+        const c = clean(t);
+        if (/نهائي|قطعي/.test(c)) return "judgment_finality";
+        if (/رقم\s*الصك|رقم\s*الحكم|الصك/.test(c)) return "deed_number";
+        if (/تاريخ\s*صك\s*الحكم|تاريخ\s*صك|تاريخ\s*الحكم/.test(c)) return "deed_date";
+        if (/المحكمة/.test(c)) return "court";
+        if (/الدائرة/.test(c)) return "circuit";
+        if (/الدرجة/.test(c)) return "degree";
+        if (/تاريخ\s*صك\s*الاستئناف|تاريخ\s*استئناف|صك\s*الاستئناف/.test(c)) return "appeal_deed_date";
+        if (/دائرة\s*الاستئناف|دائرة\s*استئناف/.test(c)) return "appeal_circuit";
+        if (/تفاصيل|تفاصيل\s*الحكم/.test(c)) return "judgment_details";
+        return null;
+      };
+      const colKeys = headers.map(matchKey);
+      const rows = $all("tbody tr", table).length ? $all("tbody tr", table) : $all("tr", table);
+      rows.forEach((row, i) => {
+        if (i === 0 && $all("th", row).length && !$all("td", row).length) return;
+        const cells = $all("td, th", row).map(text);
+        if (cells.length < 2) return;
+        const j = {};
+        cells.forEach((v, ci) => { const k = colKeys[ci]; if (k && v) j[k] = v; });
+        if (j.deed_date) j.deed_date = parseDateISO(j.deed_date) || j.deed_date;
+        if (j.appeal_deed_date) j.appeal_deed_date = parseDateISO(j.appeal_deed_date) || j.appeal_deed_date;
+        if (j.deed_number || j.judgment_details) judgments.push(j);
+      });
+    });
+
+    const judgmentContainers = [];
+    $all("[class*='judgment'], [class*='deed'], [class*='حكم'], [class*='صك']").forEach((el) => judgmentContainers.push(el));
+    if (judgmentContainers.length === 0) {
+      $all("div, section").forEach((el) => {
+        const t = clean(el.innerText || "");
+        if (t.length > 3000 || t.length < 10) return;
+        if (/الأحكام|الاحكام/.test(t) && /الصك|الحكم|المحكمة/.test(t)) judgmentContainers.push(el);
+      });
+    }
+    judgmentContainers.forEach((container) => {
+      const items = container.querySelectorAll("[class*='item'], [class*='row'], tr, li, [class*='card'], [class*='entry']");
+      const targets = items.length ? Array.from(items) : [container];
+      targets.forEach((item) => {
+        const t = clean(item.innerText || "");
+        if (!t || t.length < 5 || t.length > 800) return;
+        if (!/صك|حكم|الأحكام/.test(t)) return;
+        const j = {};
+        const finalityMatch = t.match(/(نهائي|غير\s*قطعي|قطعي|ابتدائي)/);
+        if (finalityMatch) j.judgment_finality = finalityMatch[1];
+        const deedNumMatch = t.match(/(?:رقم\s*الصك|رقم\s*الحكم)\s*[:\-]?\s*(\d{4,})/);
+        if (deedNumMatch) j.deed_number = deedNumMatch[1];
+        const deedDateMatch = t.match(/(?:تاريخ\s*صك\s*الحكم|تاريخ\s*صك|تاريخ\s*الحكم)\s*[:\-]?\s*(\d{1,2}[\/\-]\d{1,2}[\/\-]\d{4}|\d{4}[\/\-]\d{1,2}[\/\-]\d{1,2}|\d{1,2}[\/\-]\d{1,2}[\/\-]14\d{2})/);
+        if (deedDateMatch) j.deed_date = parseDateISO(deedDateMatch[1]) || deedDateMatch[1];
+        const courtMatch = t.match(/(?:المحكمة)\s*[:\-]?\s*([^\n|،]{2,60})/);
+        if (courtMatch) j.court = clean(courtMatch[1]);
+        const circuitMatch = t.match(/(?:الدائرة)\s*[:\-]?\s*([^\n|،]{1,30})/);
+        if (circuitMatch) j.circuit = clean(circuitMatch[1]);
+        const degMatch = t.match(/(?:الدرجة)\s*[:\-]?\s*([^\n|،]{1,20})/);
+        if (degMatch) j.degree = clean(degMatch[1]);
+        const appealDateMatch = t.match(/(?:تاريخ\s*صك\s*الاستئناف|تاريخ\s*الاستئناف)\s*[:\-]?\s*(\d{1,2}[\/\-]\d{1,2}[\/\-]\d{4}|\d{4}[\/\-]\d{1,2}[\/\-]\d{1,2}|\d{1,2}[\/\-]\d{1,2}[\/\-]14\d{2})/);
+        if (appealDateMatch) j.appeal_deed_date = parseDateISO(appealDateMatch[1]) || appealDateMatch[1];
+        const appealCircuitMatch = t.match(/(?:دائرة\s*الاستئناف|دائرة\s*استئناف)\s*[:\-]?\s*([^\n|،]{1,30})/);
+        if (appealCircuitMatch) j.appeal_circuit = clean(appealCircuitMatch[1]);
+        const detMatch = t.match(/(?:تفاصيل|تفاصيل\s*الحكم)\s*[:\-]?\s*([^\n]{2,400})/);
+        if (detMatch) j.judgment_details = clean(detMatch[1]);
+        if (j.deed_number || j.judgment_details) {
+          const exists = judgments.some((ex) => ex.deed_number === j.deed_number && j.deed_number);
+          if (!exists) judgments.push(j);
+        }
+      });
+    });
+
+    return judgments;
+  }
+
+  function scrapeLawsuitRequests() {
+    const requests = [];
+
+    $all("table").forEach((table) => {
+      const headers = $all("thead th, thead td, tr:first-child th, tr:first-child td", table).map(text);
+      const hasRequestHeader = headers.some((h) => /نوع\s*الطلب|الطلب|التسبيبات|أسباب|الطلبات/.test(h));
+      if (!hasRequestHeader) return;
+      const matchKey = (t) => {
+        const c = clean(t);
+        if (/رقم\s*القضية|رقم\s*الدعوى/.test(c)) return "case_number";
+        if (/تاريخ\s*القضية|تاريخ\s*الدعوى/.test(c)) return "case_date";
+        if (/المحكمة|اسم\s*المحكمة/.test(c)) return "court_name";
+        if (/الدائرة|رقم\s*الدائرة/.test(c)) return "circuit_number";
+        if (/حالة\s*القضية|حالة\s*الدعوى|حالة/.test(c)) return "case_status";
+        if (/تصنيف\s*القضية|التصنيف/.test(c)) return "case_classification";
+        if (/نوع\s*القضية|نوع\s*الدعوى/.test(c)) return "case_type_detail";
+        if (/نوع\s*الطلب|الطلب/.test(c)) return "request_type";
+        if (/رقم\s*الحكم/.test(c)) return "judgment_number";
+        if (/التسبيبات|تسبيبات/.test(c)) return "submissions";
+        if (/أسباب\s*الطلب|أسباب/.test(c)) return "request_reasons";
+        return null;
+      };
+      const colKeys = headers.map(matchKey);
+      const rows = $all("tbody tr", table).length ? $all("tbody tr", table) : $all("tr", table);
+      rows.forEach((row, i) => {
+        if (i === 0 && $all("th", row).length && !$all("td", row).length) return;
+        const cells = $all("td, th", row).map(text);
+        if (cells.length < 2) return;
+        const r = {};
+        cells.forEach((v, j) => { const k = colKeys[j]; if (k && v) r[k] = v; });
+        if (r.case_number) requests.push(r);
+      });
+    });
+
+    const requestContainers = [];
+    $all("[class*='request'], [class*='طلب']").forEach((el) => requestContainers.push(el));
+    if (requestContainers.length === 0) {
+      $all("div, section").forEach((el) => {
+        const t = clean(el.innerText || "");
+        if (t.length > 3000 || t.length < 15) return;
+        if (/طلبات|الطلبات|طلب/.test(t) && /نوع\s*الطلب|القضية|التسبيبات|أسباب/.test(t)) requestContainers.push(el);
+      });
+    }
+    requestContainers.forEach((container) => {
+      const items = container.querySelectorAll("[class*='item'], [class*='row'], tr, li, [class*='card'], [class*='entry']");
+      const targets = items.length ? Array.from(items) : [container];
+      targets.forEach((item) => {
+        const t = clean(item.innerText || "");
+        if (!t || t.length < 10 || t.length > 800) return;
+        if (!/طلب/.test(t)) return;
+        const r = {};
+        const cnMatch = t.match(/(?:رقم\s*القضية|رقم\s*الدعوى)\s*[:\-]?\s*(\d{4}\s*\/\s*\d{3,}|\d{9,})/);
+        if (cnMatch) r.case_number = cnMatch[1].replace(/\s/g, "");
+        const cdMatch = t.match(/(?:تاريخ\s*القضية|تاريخ\s*الدعوى)\s*[:\-]?\s*(\d{1,2}[\/\-]\d{1,2}[\/\-]\d{4}|\d{4}[\/\-]\d{1,2}[\/\-]\d{1,2}|\d{1,2}[\/\-]\d{1,2}[\/\-]14\d{2})/);
+        if (cdMatch) r.case_date = parseDateISO(cdMatch[1]) || cdMatch[1];
+        const courtMatch = t.match(/(?:المحكمة|اسم\s*المحكمة)\s*[:\-]?\s*([^\n|،]{2,60})/);
+        if (courtMatch) r.court_name = clean(courtMatch[1]);
+        const circuitMatch = t.match(/(?:الدائرة|رقم\s*الدائرة)\s*[:\-]?\s*([^\n|،]{1,30})/);
+        if (circuitMatch) r.circuit_number = clean(circuitMatch[1]);
+        const statusMatch = t.match(/(?:حالة\s*(?:القضية|الدعوى|الطلب))\s*[:\-]?\s*([^\n|،]{2,40})/);
+        if (statusMatch) r.case_status = clean(statusMatch[1]);
+        const classMatch = t.match(/(?:تصنيف\s*(?:القضية|الدعوى))\s*[:\-]?\s*([^\n|،]{2,40})/);
+        if (classMatch) r.case_classification = clean(classMatch[1]);
+        const typeMatch = t.match(/(?:نوع\s*(?:القضية|الدعوى|الطلب))\s*[:\-]?\s*([^\n|،]{2,40})/);
+        if (typeMatch) {
+          if (/نوع\s*القضية|نوع\s*الدعوى/.test(typeMatch[0])) r.case_type_detail = clean(typeMatch[1]);
+          else r.request_type = clean(typeMatch[1]);
+        }
+        const jnMatch = t.match(/(?:رقم\s*الحكم)\s*[:\-]?\s*(\d{4,})/);
+        if (jnMatch) r.judgment_number = jnMatch[1];
+        const subMatch = t.match(/(?:التسبيبات|تسبيبات)\s*[:\-]?\s*([^\n]{2,400})/);
+        if (subMatch) r.submissions = clean(subMatch[1]);
+        const reasonsMatch = t.match(/(?:أسباب\s*الطلب|أسباب)\s*[:\-]?\s*([^\n]{2,400})/);
+        if (reasonsMatch) r.request_reasons = clean(reasonsMatch[1]);
+
+        for (let idx = 1; idx <= 6; idx++) {
+          const reasonLabels = [
+            `السبب ${idx}`, `سبب ${idx}`, `السبب ${["الأول","الثاني","الثالث","الرابع","الخامس","السادس"][idx-1]}`,
+            `reason_${idx}`, `reason${idx}`,
+          ];
+          for (const lbl of reasonLabels) {
+            const re = new RegExp(lbl.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") + "\\s*[:\\-–]?\\s*([^\\n|،]{2,300})");
+            const m = t.match(re);
+            if (m) { r[`reason_${idx}`] = clean(m[1]); break; }
+          }
+        }
+
+        if (r.case_number || r.request_type) {
+          const exists = requests.some((ex) => ex.case_number === r.case_number && ex.request_type === r.request_type);
+          if (!exists) requests.push(r);
+        }
+      });
+    });
+
+    return requests;
+  }
+
+  function scrapePowerDetail() {
+    const fields = {};
+
+    fields.issuer_entity = _findValueByLabel(["جهة الإصدار", "جهة الاصدار"]);
+    fields.usage_method = _findValueByLabel(["كيفية الاستخدام", "كيفية الاستعمال", "طريقة الاستخدام"]);
+    fields.issuer_capacity = _findValueByLabel(["صفة المُصدر", "صفة المُوكِّل", "صفة المصدر", "صفة المُصدِّر"]);
+    fields.issuer_nationality = _findValueByLabel(["جنسية المُصدر", "جنسية المُوكِّل", "جنسية المصدر", "جنسية المُصدِّر"]);
+    fields.issuer_identity_type = _findValueByLabel(["نوع هوية المُصدر", "نوع هوية المُوكِّل", "نوع تعريف المُصدر"]);
+    fields.issuer_status_in_agency = _findValueByLabel(["حالة المُصدر في الوكالة", "حالة المُوكِّل في الوكالة", "حالة المصدر في الوكالة"]);
+    fields.agent_capacity = _findValueByLabel(["صفة الوكيل", "صفة المُوكَل"]);
+    fields.agent_nationality = _findValueByLabel(["جنسية الوكيل", "جنسية المُوكَل"]);
+    fields.agent_identity_type = _findValueByLabel(["نوع هوية الوكيل", "نوع تعريف الوكيل"]);
+    fields.agent_status_in_agency = _findValueByLabel(["حالة الوكيل في الوكالة", "حالة المُوكَل في الوكالة"]);
+    fields.agency_clauses = _findValueByLabel(["بنود الوكالة", "البنود", "بنود"]);
+    fields.agency_text = _findValueByLabel(["نص الوكالة", "النص"]);
+    fields.agency_data = _findValueByLabel(["بيانات الوكالة", "البيانات"]);
+
+    $all("dt").forEach((dt) => {
+      const label = clean(dt.textContent);
+      const dd = dt.nextElementSibling;
+      if (!dd || dd.tagName !== "DD") return;
+      const value = clean(dd.textContent);
+      if (!label || !value) return;
+      if (/جهة\s*الإصدار/.test(label)) fields.issuer_entity = fields.issuer_entity || value;
+      if (/كيفية\s*الاستخدام/.test(label)) fields.usage_method = fields.usage_method || value;
+      if (/صفة\s*(?:المُصدر|المُوكل|المصدر)/.test(label)) fields.issuer_capacity = fields.issuer_capacity || value;
+      if (/جنسية\s*(?:المُصدر|المُوكل|المصدر)/.test(label)) fields.issuer_nationality = fields.issuer_nationality || value;
+      if (/نوع\s*(?:هوية|تعريف)\s*(?:المُصدر|المُوكل|المصدر)/.test(label)) fields.issuer_identity_type = fields.issuer_identity_type || value;
+      if (/حالة\s*(?:المُصدر|المُوكل|المصدر)\s*في\s*الوكالة/.test(label)) fields.issuer_status_in_agency = fields.issuer_status_in_agency || value;
+      if (/صفة\s*الوكيل/.test(label)) fields.agent_capacity = fields.agent_capacity || value;
+      if (/جنسية\s*الوكيل/.test(label)) fields.agent_nationality = fields.agent_nationality || value;
+      if (/نوع\s*(?:هوية|تعريف)\s*الوكيل/.test(label)) fields.agent_identity_type = fields.agent_identity_type || value;
+      if (/حالة\s*الوكيل\s*في\s*الوكالة/.test(label)) fields.agent_status_in_agency = fields.agent_status_in_agency || value;
+      if (/بنود\s*الوكالة/.test(label)) fields.agency_clauses = fields.agency_clauses || value;
+      if (/نص\s*الوكالة/.test(label)) fields.agency_text = fields.agency_text || value;
+      if (/بيانات\s*الوكالة/.test(label)) fields.agency_data = fields.agency_data || value;
+    });
+
+    $all("table").forEach((table) => {
+      $all("tr", table).forEach((row) => {
+        const cells = $all("td, th", row).map(text);
+        if (cells.length === 2 && cells[0].length < 60 && cells[1]) {
+          const l = cells[0], v = cells[1];
+          if (/جهة\s*الإصدار/.test(l)) fields.issuer_entity = fields.issuer_entity || v;
+          if (/كيفية\s*الاستخدام/.test(l)) fields.usage_method = fields.usage_method || v;
+          if (/صفة\s*(?:المُصدر|المُوكل|المصدر)/.test(l)) fields.issuer_capacity = fields.issuer_capacity || v;
+          if (/جنسية\s*(?:المُصدر|المُوكل|المصدر)/.test(l)) fields.issuer_nationality = fields.issuer_nationality || v;
+          if (/نوع\s*(?:هوية|تعريف)\s*(?:المُصدر|المُوكل|المصدر)/.test(l)) fields.issuer_identity_type = fields.issuer_identity_type || v;
+          if (/حالة\s*(?:المُصدر|المُوكل|المصدر)\s*في/.test(l)) fields.issuer_status_in_agency = fields.issuer_status_in_agency || v;
+          if (/صفة\s*الوكيل/.test(l)) fields.agent_capacity = fields.agent_capacity || v;
+          if (/جنسية\s*الوكيل/.test(l)) fields.agent_nationality = fields.agent_nationality || v;
+          if (/نوع\s*(?:هوية|تعريف)\s*الوكيل/.test(l)) fields.agent_identity_type = fields.agent_identity_type || v;
+          if (/حالة\s*الوكيل\s*في/.test(l)) fields.agent_status_in_agency = fields.agent_status_in_agency || v;
+          if (/بنود\s*الوكالة/.test(l)) fields.agency_clauses = fields.agency_clauses || v;
+          if (/نص\s*الوكالة/.test(l)) fields.agency_text = fields.agency_text || v;
+          if (/بيانات\s*الوكالة/.test(l)) fields.agency_data = fields.agency_data || v;
+        }
+      });
+    });
+
+    return fields;
+  }
+
+  async function clickSidebarTab(label) {
+    // Strategy 1: Look for elements with exact or partial text match in sidebar-like containers
+    // Najiz uses Angular components with specific class patterns
+    const sidebarSelectors = [
+      "[class*='sidebar']",
+      "[class*='side-bar']",
+      "[class*='sidenav']",
+      "[class*='side-nav']",
+      "[class*='menu']",
+      "[class*='nav-tabs']",
+      "[class*='tabset']",
+      "[class*='accordion']",
+      "[role='tablist']",
+      "[role='navigation']",
+      "nav",
+      "aside",
+      ".mat-tab-list",
+      ".nav",
+      ".tabs",
+    ];
+    
+    // First try to find a sidebar container, then look for clickable items within it
+    for (const sidebarSel of sidebarSelectors) {
+      const sidebars = $all(sidebarSel);
+      for (const sidebar of sidebars) {
+        const items = $all("a, button, [role='tab'], li, [class*='item'], [class*='tab'], [class*='link'], span, div", sidebar);
+        for (const item of items) {
+          const t = clean(item.textContent || item.innerText || "");
+          if (!t || t.length > 80) continue;
+          if (t.includes(label)) {
+            try {
+              // Scroll the item into view first
+              item.scrollIntoView({ behavior: "instant", block: "center" });
+              await sleep(300);
+              item.click();
+              await sleep(2000);
+              // After clicking, scroll the main content area to load all data
+              await autoScrollFull();
+              return true;
+            } catch {}
+          }
+        }
+      }
+    }
+    
+    // Strategy 2: Search the entire page for clickable elements with the label
+    // This is a fallback for when the sidebar doesn't have distinctive classes
+    const allClickable = $all("a, button, [role='tab'], [role='button'], li, [class*='tab'], [class*='nav-item'], [class*='menu-item'], [class*='sidebar'] *, [class*='side'] *");
+    for (const el of allClickable) {
+      const t = clean(el.textContent || el.innerText || "");
+      if (!t || t.length > 60) continue;
+      if (t.includes(label)) {
+        // Verify this looks like a navigation element (not random text)
+        const parent = el.parentElement;
+        const parentClass = (parent?.className || "").toLowerCase();
+        const isNavLike = /tab|nav|menu|side|list|item|link|btn|button|accordion/i.test(parentClass) ||
+                          parent?.getAttribute("role") === "tablist" ||
+                          parent?.tagName === "NAV" ||
+                          parent?.tagName === "ASIDE" ||
+                          parent?.tagName === "UL";
+        if (isNavLike || t.length < 30) {
+          try {
+            el.scrollIntoView({ behavior: "instant", block: "center" });
+            await sleep(300);
+            el.click();
+            await sleep(2000);
+            await autoScrollFull();
+            return true;
+          } catch {}
+        }
+      }
+    }
+    
+    // Strategy 3: Last resort - look for any element with the exact label text
+    const allElements = $all("*");
+    for (const el of allElements) {
+      if (el.children.length > 5) continue;
+      const t = clean(el.textContent || el.innerText || "");
+      if (t === label || t === label + ":" || t === label + " :") {
+        try {
+          el.scrollIntoView({ behavior: "instant", block: "center" });
+          await sleep(300);
+          el.click();
+          await sleep(2000);
+          await autoScrollFull();
+          return true;
+        } catch {}
+      }
+    }
+    
+    return false;
+  }
+
+  function scrapeSidebarContent(sectionLabel) {
+    const result = { section: sectionLabel };
+    
+    if (sectionLabel.includes("أطراف الدعوي") || sectionLabel.includes("أطراف الدعوى")) {
+      const plaintiffs = [];
+      const defendants = [];
+      $all("table").forEach((table) => {
+        const headers = $all("thead th, thead td, tr:first-child th, tr:first-child td", table).map(text);
+        const rows = $all("tbody tr", table).length ? $all("tbody tr", table) : $all("tr", table);
+        rows.forEach((row, i) => {
+          if (i === 0 && $all("th", row).length && !$all("td", row).length) return;
+          const cells = $all("td, th", row).map(text);
+          if (cells.length < 2) return;
+          const party = {};
+          cells.forEach((v, j) => {
+            const h = headers[j] || "";
+            if (/الاسم|اسم\s*الخصم|اسم\s*الطرف/.test(h)) party.name = v;
+            if (/الجنسية|جنسية/.test(h)) party.nationality = v;
+            if (/نوع\s*الهوية|نوع\s*التعريف/.test(h)) party.id_type = v;
+            if (/رقم\s*الهوية|رقم\s*التعريف|رقم\s*السجل/.test(h)) party.id_number = v;
+            if (/الصفة|صفة\s*الخصم/.test(h)) party.capacity = v;
+            if (/الوكالة|حالة\s*الوكالة/.test(h)) party.poa_status = v;
+          });
+          if (party.name || party.id_number) {
+            const rowText = cells.join(" ");
+            if (/مدعي\s*عليه|مدعى\s*عليه/.test(rowText)) defendants.push(party);
+            else plaintiffs.push(party);
+          }
+        });
+      });
+      if (plaintiffs.length === 0 && defendants.length === 0) {
+        const allParties = scrapeCaseParties();
+        for (const p of allParties) {
+          if (p.party_role === "defendant") defendants.push(p);
+          else plaintiffs.push(p);
+        }
+      }
+      result.plaintiffs = plaintiffs;
+      result.defendants = defendants;
+      return result;
+    }
+    
+    if (sectionLabel.includes("الجلسات")) {
+      result.sessions = scrapeCaseSessionsDetail();
+      return result;
+    }
+    
+    if (sectionLabel.includes("الأحكام") || sectionLabel.includes("الاحكام")) {
+      result.judgments = scrapeCaseJudgments();
+      return result;
+    }
+    
+    if (sectionLabel.includes("الطلبات")) {
+      result.requests = scrapeLawsuitRequests();
+      return result;
+    }
+    
+    result.fields = scrapeDetailPage();
+    return result;
+  }
+
+  // =====================================================
   // API الرئيسي — sccrape() يُرجع payload بصيغة /api/public/najiz-sync
   // =====================================================
   window.__ADALA_NAJIZ__ = {
@@ -1040,6 +1782,14 @@
     findDetailLinks,
     scrapeDetailPage,
     detailToSchema,
+    scrapeCaseDetailFields,
+    scrapeCaseParties,
+    scrapeCaseSessionsDetail,
+    scrapeCaseJudgments,
+    scrapeLawsuitRequests,
+    scrapePowerDetail,
+    clickSidebarTab,
+    scrapeSidebarContent,
 
     async scrape(kindFilter) {
       console.log("[منصة العدالة] بدء السحب — kindFilter:", kindFilter, "URL:", location.href);
