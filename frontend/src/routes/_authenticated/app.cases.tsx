@@ -2,8 +2,8 @@ import { createFileRoute } from "@tanstack/react-router";
 import { useState, useMemo } from "react";
 import {
   Briefcase, LayoutGrid, List, FileText, Calendar, Gavel, AlertTriangle,
-  Users, Scale, Hash, ArrowRightLeft, Eye, Trash2, Upload, X,
-  ChevronLeft, ChevronRight, Clock, BookOpen, Shield,
+  Users, Scale, Hash, ArrowRightLeft, Eye, Trash2, Upload, X, Edit,
+  ChevronLeft, ChevronRight, Clock, BookOpen, Shield, MoreVertical, Download,
 } from "lucide-react";
 import { PageHeader } from "@/components/section-shell";
 import { Card } from "@/components/ui/card";
@@ -13,6 +13,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/u
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Separator } from "@/components/ui/separator";
+import { Input } from "@/components/ui/input";
 import { useList, useUpsert, useDelete } from "@/lib/data-hooks";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
@@ -24,10 +25,10 @@ export const Route = createFileRoute("/_authenticated/app/cases")({
 const STATUS_LABEL: Record<string, string> = {
   open: "مفتوحة",
   in_study: "قيد الدراسة",
-  closed_final: "منتهية",
+  closed_final: "محكوم بها بحكم نهائي",
   closed_non_final: "محكوم بها بحكم غير نهائي",
   appealed: "مؤجلة",
-  final_judgment: "محكوم بها بحكم قطعي",
+  final_judgment: "نهائية",
 };
 
 const STATUS_COLORS: Record<string, string> = {
@@ -56,8 +57,9 @@ function CasesPage() {
   const { data: lawsuitRequests = [] } = useList<any>("lawsuit_requests");
   const upsert = useUpsert("cases");
   const del = useDelete("cases");
-  const [view, setView] = useState<"grid" | "list">("grid");
+  const [view, setView] = useState<"grid" | "list">("list");
   const [selectedCase, setSelectedCase] = useState<any | null>(null);
+  const [searchQuery, setSearchQuery] = useState("");
 
   const formatDate = (dateStr: string | null) => {
     if (!dateStr) return null;
@@ -96,11 +98,32 @@ function CasesPage() {
     return docs.filter((d: any) => d.case_id === caseId && (d.doc_type === "judgment_final" || d.doc_type === "judgment_non_final")).length;
   };
 
+  // Filter cases by search query
+  const filteredCases = useMemo(() => {
+    if (!searchQuery.trim()) return cases;
+    const q = searchQuery.toLowerCase();
+    return cases.filter((c: any) =>
+      c.case_number?.toLowerCase().includes(q) ||
+      c.title?.toLowerCase().includes(q) ||
+      c.court?.toLowerCase().includes(q)
+    );
+  }, [cases, searchQuery]);
+
   return (
     <>
       <PageHeader icon={Briefcase} title="إدارة القضايا" subtitle={`${cases.length} قضية`}
         action={
-          <div className="flex gap-2">
+          <div className="flex gap-2 items-center">
+            {/* Search */}
+            <div className="relative">
+              <Input
+                placeholder="بحث برقم القضية..."
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                className="w-48 h-9 pr-3 text-right"
+              />
+            </div>
+            {/* View Toggle */}
             <div className="flex rounded-lg border bg-card p-1">
               <Button size="sm" variant={view === "grid" ? "default" : "ghost"} onClick={() => setView("grid")} className="h-8 px-3 gap-1">
                 <LayoutGrid className="h-4 w-4" /> مربعات
@@ -118,30 +141,27 @@ function CasesPage() {
         <Card className="card-luxe border-none p-10 text-center">
           <p className="text-sm">لا توجد قضايا — قم بمزامنة بيانات ناجز أو أضف قضية يدوياً</p>
         </Card>
-      ) : (
+      ) : view === "grid" ? (
+        /* ===== GRID VIEW ===== */
         <div className="grid gap-5 md:grid-cols-2 xl:grid-cols-3">
-          {cases.map((c: any) => {
+          {filteredCases.map((c: any) => {
             const parties = getPartiesForCase(c.id);
             const plaintiffs = parties.filter((p: any) => p.party_type === "plaintiff");
             const defendants = parties.filter((p: any) => p.party_type === "defendant");
             const caseSessionsList = getSessionsForCase(c.id);
+            const details = getDetailsForCase(c.id);
             const nextSession = caseSessionsList
               .filter((s: any) => s.session_date && new Date(s.session_date) >= new Date())
               .sort((a: any, b: any) => new Date(a.session_date).getTime() - new Date(b.session_date).getTime())[0];
 
             return (
               <Card key={c.id} className="card-luxe border-none p-0 cursor-pointer relative hover:shadow-2xl transition-all duration-300 overflow-hidden group" onClick={() => setSelectedCase(c)}>
-                {/* Header gradient */}
                 <div className="h-2 bg-gradient-to-l from-[#c9a227] via-[#d4af37] to-[#c9a227]" />
-                
                 <div className="p-5">
                   {/* Status and Transfer Row */}
                   <div className="flex justify-between items-start mb-3 gap-2">
                     <div className="flex-1">
-                      <Select
-                        value={c.status || "open"}
-                        onValueChange={(value) => handleStatusChange(c.id, value, { stopPropagation: () => {} } as any)}
-                      >
+                      <Select value={c.status || "open"} onValueChange={(value) => handleStatusChange(c.id, value, { stopPropagation: () => {} } as any)}>
                         <SelectTrigger className={`h-7 text-[11px] font-bold border-2 ${STATUS_COLORS[c.status] || STATUS_COLORS.open}`} onClick={(e) => e.stopPropagation()}>
                           <SelectValue />
                         </SelectTrigger>
@@ -153,10 +173,7 @@ function CasesPage() {
                       </Select>
                     </div>
                     <div className="w-36">
-                      <Select
-                        value={c.transferred_to || ""}
-                        onValueChange={(value) => handleTransfer(c.id, value, { stopPropagation: () => {} } as any)}
-                      >
+                      <Select value={c.transferred_to || ""} onValueChange={(value) => handleTransfer(c.id, value, { stopPropagation: () => {} } as any)}>
                         <SelectTrigger className="h-7 text-[10px] border border-border" onClick={(e) => e.stopPropagation()}>
                           <SelectValue placeholder="نقل إلى..." />
                         </SelectTrigger>
@@ -170,14 +187,20 @@ function CasesPage() {
                     </div>
                   </div>
 
-                  {/* Case Number */}
+                  {/* Case Number & Date */}
                   <div className="flex items-center justify-between mb-2">
                     <span className="text-xs font-black text-[#8a6a1a] tracking-wide">#{c.case_number}</span>
-                    {c.opened_at && <span className="text-[10px] text-muted-foreground">{formatDate(c.opened_at)}</span>}
+                    {(details?.case_date || c.opened_at) && <span className="text-[10px] text-muted-foreground">{formatDate(details?.case_date || c.opened_at)}</span>}
+                  </div>
+
+                  {/* Case Type & Classification */}
+                  <div className="flex gap-2 mb-2">
+                    {details?.case_type_detail && <Badge variant="outline" className="text-[9px] bg-blue-50 text-blue-700 border-blue-200">{details.case_type_detail}</Badge>}
+                    {details?.case_classification && <Badge variant="outline" className="text-[9px] bg-purple-50 text-purple-700 border-purple-200">{details.case_classification}</Badge>}
                   </div>
 
                   {/* Title */}
-                  <h3 className="font-extrabold text-base mb-3 leading-snug text-[#1f1810] line-clamp-2">{c.title}</h3>
+                  <h3 className="font-extrabold text-base mb-3 leading-snug text-[#1f1810] line-clamp-2">{c.title || details?.subject_matter || `قضية ${c.case_number}`}</h3>
 
                   {/* Parties */}
                   <div className="mb-3 p-3 bg-gradient-to-l from-amber-50/80 to-amber-50/30 rounded-lg border border-amber-200/40">
@@ -212,18 +235,18 @@ function CasesPage() {
 
                   {/* Court and Circuit */}
                   <div className="mb-3 space-y-1">
-                    {c.court && (
+                    {(details?.court_name || c.court) && (
                       <div className="flex items-center gap-2">
                         <Scale className="h-3 w-3 text-[#8a6a1a]" />
                         <span className="text-[10px] text-muted-foreground font-bold">المحكمة:</span>
-                        <span className="text-xs font-semibold text-[#1f1810]">{c.court}</span>
+                        <span className="text-xs font-semibold text-[#1f1810]">{details?.court_name || c.court}</span>
                       </div>
                     )}
-                    {c.circuit_number && (
+                    {(details?.circuit_number || c.circuit_number) && (
                       <div className="flex items-center gap-2">
                         <Hash className="h-3 w-3 text-[#8a6a1a]" />
                         <span className="text-[10px] text-muted-foreground font-bold">الدائرة:</span>
-                        <span className="text-xs font-semibold text-[#1f1810]">{c.circuit_number}</span>
+                        <span className="text-xs font-semibold text-[#1f1810]">{details?.circuit_number || c.circuit_number}</span>
                       </div>
                     )}
                   </div>
@@ -237,18 +260,6 @@ function CasesPage() {
                         <span className="text-xs font-semibold text-blue-900">{formatDate(nextSession.session_date)}</span>
                         {nextSession.session_time && <span className="text-[10px] text-blue-700">({nextSession.session_time})</span>}
                       </div>
-                    </div>
-                  )}
-
-                  {/* Deed/Judgment Info */}
-                  {(c.deed_number || c.judgment_number) && (
-                    <div className="mb-3 p-2 bg-emerald-50/60 rounded-lg border border-emerald-200/40">
-                      <div className="flex items-center gap-2 mb-1">
-                        <Gavel className="h-3 w-3 text-emerald-700" />
-                        <span className="text-[10px] font-bold text-emerald-800">معلومات الحكم</span>
-                      </div>
-                      {c.deed_number && <div className="text-[11px] text-emerald-900"><span className="font-bold">رقم الصك:</span> {c.deed_number}</div>}
-                      {c.judgment_date && <div className="text-[11px] text-emerald-900"><span className="font-bold">التاريخ:</span> {formatDate(c.judgment_date)}</div>}
                     </div>
                   )}
 
@@ -285,6 +296,100 @@ function CasesPage() {
             );
           })}
         </div>
+      ) : (
+        /* ===== LIST VIEW (Najiz-style) ===== */
+        <Card className="border-none shadow-sm overflow-hidden">
+          {/* Table Header - Najiz style */}
+          <div className="bg-[#f8f7f4] border-b border-[#e5e2db]">
+            <div className="grid grid-cols-[1fr_1fr_1fr_1fr_1.2fr_1.2fr_1fr_0.5fr] gap-2 px-4 py-3 text-[11px] font-bold text-[#5a4510]">
+              <div>رقم القضية</div>
+              <div>تاريخ القضية</div>
+              <div>نوع القضية</div>
+              <div>الصفة</div>
+              <div>المدعي</div>
+              <div>المدعى عليه</div>
+              <div>الحالة</div>
+              <div></div>
+            </div>
+          </div>
+          
+          {/* Table Body */}
+          <div className="divide-y divide-[#f0ede6]">
+            {filteredCases.map((c: any) => {
+              const parties = getPartiesForCase(c.id);
+              const plaintiffs = parties.filter((p: any) => p.party_type === "plaintiff");
+              const defendants = parties.filter((p: any) => p.party_type === "defendant");
+              const details = getDetailsForCase(c.id);
+              const plaintiffNames = plaintiffs.map((p: any) => p.party_name).join("، ") || c.plaintiff_name || "—";
+              const defendantNames = defendants.map((p: any) => p.party_name).join("، ") || c.defendant_name || "—";
+              
+              // Determine user's role in the case
+              const userRole = plaintiffs.length > 0 ? "المدعي" : defendants.length > 0 ? "المدعى عليه" : "—";
+
+              return (
+                <div
+                  key={c.id}
+                  className="grid grid-cols-[1fr_1fr_1fr_1fr_1.2fr_1.2fr_1fr_0.5fr] gap-2 px-4 py-3 items-center hover:bg-[#faf9f6] transition-colors cursor-pointer group"
+                  onClick={() => setSelectedCase(c)}
+                >
+                  {/* Case Number */}
+                  <div className="flex items-center gap-2">
+                    <span className="text-sm font-bold text-[#1f1810]">{c.case_number}</span>
+                  </div>
+                  
+                  {/* Case Date */}
+                  <div className="text-xs text-[#5a4510]">
+                    {formatDate(details?.case_date || c.opened_at) || "—"}
+                  </div>
+                  
+                  {/* Case Type */}
+                  <div className="text-xs text-[#5a4510]">
+                    {details?.case_type_detail || c.case_type || "—"}
+                  </div>
+                  
+                  {/* Role */}
+                  <div>
+                    <Badge variant="outline" className="text-[10px] bg-[#f8f7f4] text-[#5a4510] border-[#e5e2db]">
+                      {userRole}
+                    </Badge>
+                  </div>
+                  
+                  {/* Plaintiff */}
+                  <div className="text-xs text-[#1f1810] font-medium truncate" title={plaintiffNames}>
+                    {plaintiffNames}
+                  </div>
+                  
+                  {/* Defendant */}
+                  <div className="text-xs text-[#1f1810] font-medium truncate" title={defendantNames}>
+                    {defendantNames}
+                  </div>
+                  
+                  {/* Status */}
+                  <div>
+                    <Badge variant="outline" className={`text-[10px] ${STATUS_COLORS[c.status] || STATUS_COLORS.open}`}>
+                      {STATUS_LABEL[c.status] || "مفتوحة"}
+                    </Badge>
+                  </div>
+                  
+                  {/* Actions */}
+                  <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                    <Button size="sm" variant="ghost" className="h-7 w-7 p-0" onClick={(e) => { e.stopPropagation(); setSelectedCase(c); }}>
+                      <Eye className="h-3.5 w-3.5 text-[#8a6a1a]" />
+                    </Button>
+                    <Button size="sm" variant="ghost" className="h-7 w-7 p-0" onClick={(e) => { e.stopPropagation(); handleDelete(c.id, e); }}>
+                      <Trash2 className="h-3.5 w-3.5 text-rose-600" />
+                    </Button>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+          
+          {/* Table Footer */}
+          <div className="bg-[#f8f7f4] border-t border-[#e5e2db] px-4 py-2 flex items-center justify-between">
+            <span className="text-xs text-[#5a4510]">{filteredCases.length} نتيجة</span>
+          </div>
+        </Card>
       )}
 
       {/* Case Detail Dialog */}
@@ -327,10 +432,10 @@ function CaseDetailView({ caseData, formatDate, getDetailsForCase, getPartiesFor
       const { data: { user } } = await supabase.auth.getUser();
       if (!user) return toast.error("غير مسجل دخول");
       const path = `${user.id}/judgments/${Date.now()}-${file.name}`;
-      const { error: upErr } = await supabase.storage.from("judgment-documents").upload(path, file);
+      const { error: upErr } = await (supabase as any).storage.from("judgment-documents").upload(path, file);
       if (upErr) return toast.error(upErr.message);
-      const { data: urlData } = await supabase.storage.from("judgment-documents").getPublicUrl(path);
-      await supabase.from("case_judgments").update({ judgment_document_url: urlData.publicURL }).eq("id", judgmentId);
+      const { data: urlData } = await (supabase as any).storage.from("judgment-documents").getPublicUrl(path);
+      await (supabase as any).from("case_judgments").update({ judgment_document_url: urlData.publicUrl }).eq("id", judgmentId);
       toast.success("تم رفع المستند بنجاح");
     };
     input.click();

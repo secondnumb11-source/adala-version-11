@@ -1112,10 +1112,14 @@
 
   function scrapeCaseDetailFields() {
     const fields = {};
+    const pageText = document.body.innerText || "";
 
+    // Extract case number from URL or page
     fields.case_number = _findValueByLabel(["رقم القضية", "رقم الدعوى", "رقم الملف"]) ||
-      (document.body.innerText.match(/(\d{4}\s*\/\s*\d{3,})/) || [])[1]?.replace(/\s/g, "");
+      (pageText.match(/(\d{4}\s*\/\s*\d{3,})/) || [])[1]?.replace(/\s/g, "") ||
+      (location.pathname.match(/(\d{4,})/) || [])[1];
 
+    // Extract basic fields using multiple strategies
     fields.case_classification = _findValueByLabel(["تصنيف القضية", "التصنيف"]);
     fields.case_type_detail = _findValueByLabel(["نوع القضية", "نوع الدعوى"]);
     fields.case_date = _findValueByLabel(["تاريخ القضية", "تاريخ الدعوى", "تاريخ القيد", "تاريخ الإيداع"]);
@@ -1125,6 +1129,7 @@
     fields.court_name = _findValueByLabel(["اسم المحكمة", "المحكمة"]);
     fields.circuit_number = _findValueByLabel(["الدائرة", "رقم الدائرة"]);
 
+    // Strategy 1: dt/dd pairs
     $all("dt").forEach((dt) => {
       const label = clean(dt.textContent);
       const dd = dt.nextElementSibling;
@@ -1141,6 +1146,7 @@
       if (/الدائرة/.test(label)) fields.circuit_number = fields.circuit_number || value;
     });
 
+    // Strategy 2: table rows with 2 cells
     $all("table").forEach((table) => {
       $all("tr", table).forEach((row) => {
         const cells = $all("td, th", row).map(text);
@@ -1157,6 +1163,48 @@
         }
       });
     });
+
+    // Strategy 3: Angular/Najiz specific - look for field containers
+    $all("[class*='field'], [class*='form-row'], [class*='detail'], [class*='info-row'], [class*='label-value']").forEach((row) => {
+      if (row.children.length < 2 || row.children.length > 6) return;
+      const t = clean(row.innerText || "");
+      if (t.length > 300) return;
+      
+      const labelEl = row.querySelector("[class*='label'], label, .lbl, dt, .title, .key, strong, b");
+      const valueEl = row.querySelector("[class*='value'], [class*='val'], dd, .data, .content");
+      
+      if (labelEl && valueEl) {
+        const label = clean(labelEl.textContent);
+        const value = clean(valueEl.textContent);
+        if (label && value && label !== value) {
+          if (/تصنيف/.test(label)) fields.case_classification = fields.case_classification || value;
+          if (/نوع\s*القضية|نوع\s*الدعوى/.test(label)) fields.case_type_detail = fields.case_type_detail || value;
+          if (/تاريخ\s*القضية|تاريخ\s*الدعوى/.test(label)) fields.case_date = fields.case_date || value;
+          if (/موضوع/.test(label)) fields.subject_matter = fields.subject_matter || value;
+          if (/طلبات\s*المدعي/.test(label)) fields.plaintiff_requests = fields.plaintiff_requests || value;
+          if (/أسانيد|أسس\s*الدعوى/.test(label)) fields.case_foundations = fields.case_foundations || value;
+          if (/المحكمة/.test(label)) fields.court_name = fields.court_name || value;
+          if (/الدائرة/.test(label)) fields.circuit_number = fields.circuit_number || value;
+        }
+      }
+    });
+
+    // Strategy 4: Extract from page text using regex patterns
+    const extractFromText = (pattern, fieldName) => {
+      const match = pageText.match(pattern);
+      if (match && match[1]) {
+        fields[fieldName] = fields[fieldName] || clean(match[1]);
+      }
+    };
+
+    extractFromText(/تصنيف\s*القضية\s*[:\-]?\s*([^\n|،]{2,60})/, "case_classification");
+    extractFromText(/نوع\s*القضية\s*[:\-]?\s*([^\n|،]{2,60})/, "case_type_detail");
+    extractFromText(/تاريخ\s*القضية\s*[:\-]?\s*([^\n|،]{2,60})/, "case_date");
+    extractFromText(/موضوع\s*الدعوى?\s*[:\-]?\s*([^\n]{2,500})/, "subject_matter");
+    extractFromText(/طلبات\s*المدعي\s*[:\-]?\s*([^\n]{2,500})/, "plaintiff_requests");
+    extractFromText(/أسانيد\s*الدعوى?\s*[:\-]?\s*([^\n]{2,500})/, "case_foundations");
+    extractFromText(/(?:اسم\s*)?المحكمة\s*[:\-]?\s*([^\n|،]{2,60})/, "court_name");
+    extractFromText(/(?:رقم\s*)?الدائرة\s*[:\-]?\s*([^\n|،]{1,30})/, "circuit_number");
 
     return fields;
   }
