@@ -254,9 +254,52 @@ async function clickSidebarTabAndScrape(tabId, tabLabel) {
       func: async (lbl) => {
         const ADALA = window.__ADALA_NAJIZ__;
         if (!ADALA) return null;
-        if (ADALA.clickSidebarTab) await ADALA.clickSidebarTab(lbl);
-        await new Promise(r => setTimeout(r, 1200));
-        if (ADALA.scrapeSidebarContent) return ADALA.scrapeSidebarContent(lbl);
+        
+        // Click the sidebar tab - this internally calls autoScrollFull() after clicking
+        const clicked = ADALA.clickSidebarTab ? await ADALA.clickSidebarTab(lbl) : false;
+        if (!clicked) {
+          console.warn("[adala] sidebar tab not found:", lbl);
+          return null;
+        }
+        
+        // Wait for Angular to fully render the content panel
+        await new Promise(r => setTimeout(r, 2000));
+        
+        // Extra: scroll any scrollable content panels within the page
+        const scrollables = document.querySelectorAll("*");
+        for (const el of scrollables) {
+          const cs = getComputedStyle(el);
+          if ((cs.overflowY === "auto" || cs.overflowY === "scroll") && el.scrollHeight > el.clientHeight + 50) {
+            // Scroll this panel down and back up
+            for (let y = 0; y < el.scrollHeight; y += 300) {
+              el.scrollTo({ top: y, behavior: "instant" });
+              await new Promise(r => setTimeout(r, 150));
+            }
+            el.scrollTo({ top: 0, behavior: "instant" });
+            await new Promise(r => setTimeout(r, 300));
+            break; // Only handle the first scrollable panel found
+          }
+        }
+        
+        // Now scrape the content
+        if (ADALA.scrapeSidebarContent) {
+          const data = ADALA.scrapeSidebarContent(lbl);
+          
+          // If no data found, wait a bit longer and retry once (Angular may still be loading)
+          const hasData = data && (
+            (data.plaintiffs?.length > 0) || (data.defendants?.length > 0) ||
+            (data.sessions?.length > 0) || (data.judgments?.length > 0) ||
+            (data.requests?.length > 0) || (data.fields)
+          );
+          
+          if (!hasData) {
+            console.log("[adala] no data found for", lbl, "— retrying after wait...");
+            await new Promise(r => setTimeout(r, 2000));
+            return ADALA.scrapeSidebarContent(lbl);
+          }
+          
+          return data;
+        }
         return null;
       },
     });

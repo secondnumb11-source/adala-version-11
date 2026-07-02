@@ -1,5 +1,5 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { useState, useMemo } from "react";
+import { useState, useMemo, useEffect, useCallback } from "react";
 import {
   Briefcase, LayoutGrid, List, FileText, Calendar, Gavel, AlertTriangle,
   Users, Scale, Hash, ArrowRightLeft, Eye, Trash2, Upload, X, Edit,
@@ -17,6 +17,7 @@ import { Input } from "@/components/ui/input";
 import { useList, useUpsert, useDelete } from "@/lib/data-hooks";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
+import { useQueryClient } from "@tanstack/react-query";
 
 export const Route = createFileRoute("/_authenticated/app/cases")({
   component: CasesPage,
@@ -47,6 +48,7 @@ const TRANSFER_LABELS: Record<string, string> = {
 };
 
 function CasesPage() {
+  const queryClient = useQueryClient();
   const { data: cases = [], isLoading } = useList<any>("cases");
   const { data: sessions = [] } = useList<any>("sessions");
   const { data: docs = [] } = useList<any>("documents");
@@ -61,6 +63,32 @@ function CasesPage() {
   const [selectedCase, setSelectedCase] = useState<any | null>(null);
   const [searchQuery, setSearchQuery] = useState("");
 
+  // Listen for refresh events (e.g. after document upload or sync)
+  useEffect(() => {
+    const handler = () => {
+      queryClient.invalidateQueries({ queryKey: ["case_judgments"] });
+      queryClient.invalidateQueries({ queryKey: ["case_details"] });
+      queryClient.invalidateQueries({ queryKey: ["case_parties"] });
+      queryClient.invalidateQueries({ queryKey: ["case_sessions_detail"] });
+      queryClient.invalidateQueries({ queryKey: ["lawsuit_requests"] });
+      queryClient.invalidateQueries({ queryKey: ["cases"] });
+    };
+    window.addEventListener("adala-refresh-data", handler);
+    // Also listen for Supabase realtime changes on these tables
+    const channel = supabase
+      .channel("cases-page-realtime")
+      .on("postgres_changes", { event: "*", schema: "public", table: "case_judgments" }, () => handler())
+      .on("postgres_changes", { event: "*", schema: "public", table: "case_details" }, () => handler())
+      .on("postgres_changes", { event: "*", schema: "public", table: "case_parties" }, () => handler())
+      .on("postgres_changes", { event: "*", schema: "public", table: "case_sessions_detail" }, () => handler())
+      .on("postgres_changes", { event: "*", schema: "public", table: "lawsuit_requests" }, () => handler())
+      .subscribe();
+    return () => {
+      window.removeEventListener("adala-refresh-data", handler);
+      supabase.removeChannel(channel);
+    };
+  }, [queryClient]);
+
   const formatDate = (dateStr: string | null) => {
     if (!dateStr) return null;
     try {
@@ -69,11 +97,42 @@ function CasesPage() {
     } catch { return dateStr; }
   };
 
-  const getPartiesForCase = (caseId: string) => caseParties.filter((p: any) => p.case_id === caseId);
-  const getSessionsForCase = (caseId: string) => caseSessions.filter((s: any) => s.case_id === caseId);
-  const getJudgmentsForCase = (caseId: string) => caseJudgments.filter((j: any) => j.case_id === caseId);
-  const getRequestsForCase = (caseId: string) => lawsuitRequests.filter((r: any) => r.case_id === caseId);
-  const getDetailsForCase = (caseId: string) => caseDetails.find((d: any) => d.case_id === caseId);
+  const getPartiesForCase = (caseId: string) => {
+    const byId = caseParties.filter((p: any) => p.case_id === caseId);
+    if (byId.length > 0) return byId;
+    // Fallback: match by case_number
+    const c = cases.find((x: any) => x.id === caseId);
+    if (!c?.case_number) return [];
+    return caseParties.filter((p: any) => p.case_number === c.case_number);
+  };
+  const getSessionsForCase = (caseId: string) => {
+    const byId = caseSessions.filter((s: any) => s.case_id === caseId);
+    if (byId.length > 0) return byId;
+    const c = cases.find((x: any) => x.id === caseId);
+    if (!c?.case_number) return [];
+    return caseSessions.filter((s: any) => s.case_number === c.case_number);
+  };
+  const getJudgmentsForCase = (caseId: string) => {
+    const byId = caseJudgments.filter((j: any) => j.case_id === caseId);
+    if (byId.length > 0) return byId;
+    const c = cases.find((x: any) => x.id === caseId);
+    if (!c?.case_number) return [];
+    return caseJudgments.filter((j: any) => j.case_number === c.case_number);
+  };
+  const getRequestsForCase = (caseId: string) => {
+    const byId = lawsuitRequests.filter((r: any) => r.case_id === caseId);
+    if (byId.length > 0) return byId;
+    const c = cases.find((x: any) => x.id === caseId);
+    if (!c?.case_number) return [];
+    return lawsuitRequests.filter((r: any) => r.case_number === c.case_number);
+  };
+  const getDetailsForCase = (caseId: string) => {
+    const byId = caseDetails.find((d: any) => d.case_id === caseId);
+    if (byId) return byId;
+    const c = cases.find((x: any) => x.id === caseId);
+    if (!c?.case_number) return null;
+    return caseDetails.find((d: any) => d.case_number === c.case_number) || null;
+  };
 
   const handleStatusChange = async (caseId: string, newStatus: string, e: React.MouseEvent) => {
     e.stopPropagation();
@@ -431,11 +490,33 @@ function CaseDetailView({ caseData, formatDate, getDetailsForCase, getPartiesFor
       if (!file) return;
       const { data: { user } } = await supabase.auth.getUser();
       if (!user) return toast.error("غير مسجل دخول");
-      const path = `${user.id}/judgments/${Date.now()}-${file.name}`;
-      const { error: upErr } = await (supabase as any).storage.from("judgment-documents").upload(path, file);
-      if (upErr) return toast.error(upErr.message);
+      const safeName = file.name.replace(/[^a-zA-Z0-9._\-\u0600-\u06FF]/g, "_");
+      const path = `${user.id}/judgments/${Date.now()}-${safeName}`;
+      const { error: upErr } = await (supabase as any).storage.from("judgment-documents").upload(path, file, { upsert: true });
+      if (upErr) {
+        console.error("[upload] error:", upErr);
+        return toast.error("فشل رفع المستند: " + upErr.message);
+      }
       const { data: urlData } = await (supabase as any).storage.from("judgment-documents").getPublicUrl(path);
-      await (supabase as any).from("case_judgments").update({ judgment_document_url: urlData.publicUrl }).eq("id", judgmentId);
+      const publicUrl = urlData?.publicUrl;
+      if (!publicUrl) return toast.error("فشل الحصول على رابط المستند");
+      
+      // Update the judgment record
+      const { error: updateErr } = await (supabase as any)
+        .from("case_judgments")
+        .update({ judgment_document_url: publicUrl })
+        .eq("id", judgmentId);
+      
+      if (updateErr) {
+        console.error("[upload] update error:", updateErr);
+        return toast.error("فشل حفظ رابط المستند: " + updateErr.message);
+      }
+      
+      // Update local state so the preview button appears immediately
+      if (typeof getJudgmentsForCase === "function") {
+        // Trigger re-fetch by invalidating React Query
+        window.dispatchEvent(new CustomEvent("adala-refresh-data"));
+      }
       toast.success("تم رفع المستند بنجاح");
     };
     input.click();

@@ -109,57 +109,109 @@
   }
 
   // =====================================================
-  // تمرير تلقائي سريع (lazy-load + virtual scroll) — مُحسَّن للسرعة
+  // تمرير تلقائي شامل — يدعم نوافذ window + الحاويات الداخلية القابلة للتمرير
   // =====================================================
+
+  // Finds ALL scrollable elements on the page (window + internal panels)
+  function _findScrollableElements() {
+    const results = [];
+    // 1) The main window
+    results.push({ el: document.documentElement, isWindow: true });
+    // 2) All elements with overflow auto/scroll
+    const allEls = $all("*");
+    for (const el of allEls) {
+      const cs = getComputedStyle(el);
+      if (cs.overflowY === "auto" || cs.overflowY === "scroll" || cs.overflow === "auto" || cs.overflow === "scroll") {
+        if (el.scrollHeight > el.clientHeight + 30) {
+          results.push({ el, isWindow: false });
+        }
+      }
+    }
+    return results;
+  }
+
+  // Scrolls a single scrollable element through its full height
+  async function _scrollElementThoroughly(scrollEl, isWindow) {
+    const vh = window.innerHeight;
+    const step = Math.max(200, Math.floor(vh * 0.5));
+    const DELAY = 300;
+    const MAX_STEPS = 80;
+    const STABLE_THRESHOLD = 4;
+
+    const getScrollHeight = () => isWindow ? document.documentElement.scrollHeight : scrollEl.scrollHeight;
+    const getClientHeight = () => isWindow ? window.innerHeight : scrollEl.clientHeight;
+    const doScroll = (y) => {
+      if (isWindow) window.scrollTo({ top: y, behavior: "instant" });
+      else scrollEl.scrollTo({ top: y, behavior: "instant" });
+    };
+
+    // Scroll down pass 1
+    let lastHeight = -1, stable = 0;
+    for (let i = 0; i < MAX_STEPS; i++) {
+      const y = (i + 1) * step;
+      doScroll(y);
+      await sleep(DELAY);
+      const h = getScrollHeight();
+      if (h > lastHeight + 50) { stable = 0; lastHeight = h; }
+      else { stable++; if (stable >= STABLE_THRESHOLD) break; }
+      if (y > h + getClientHeight()) break;
+    }
+    await sleep(400);
+
+    // Scroll back to top
+    doScroll(0);
+    await sleep(300);
+
+    // Scroll down pass 2 (double-pass for lazy loading)
+    lastHeight = -1; stable = 0;
+    for (let i = 0; i < MAX_STEPS; i++) {
+      const y = (i + 1) * step;
+      doScroll(y);
+      await sleep(DELAY);
+      const h = getScrollHeight();
+      if (h > lastHeight + 50) { stable = 0; lastHeight = h; }
+      else { stable++; if (stable >= STABLE_THRESHOLD) break; }
+      if (y > h + getClientHeight()) break;
+    }
+    await sleep(400);
+
+    // Scroll UP pass — ensure top content is visible
+    const totalH = getScrollHeight();
+    for (let y = totalH; y > 0; y -= step) {
+      doScroll(y);
+      await sleep(200);
+    }
+    doScroll(0);
+    await sleep(300);
+  }
+
   async function autoScrollFull() {
     try {
-      const vh = window.innerHeight;
-      const step = Math.max(300, Math.floor(vh * 0.7));
-      const DELAY = 250;
-      const MAX_STEPS = 60;
-      const STABLE_THRESHOLD = 3;
-      
-      // Phase 1: Scroll to top first
-      window.scrollTo({ top: 0, behavior: "instant" });
-      await sleep(200);
-      
-      // Phase 2: Scroll down slowly to trigger lazy loading
-      let lastHeight = -1, stable = 0;
-      for (let i = 0; i < MAX_STEPS; i++) {
-        const y = (i + 1) * step;
-        window.scrollTo({ top: y, behavior: "instant" });
-        await sleep(DELAY);
-        const h = document.documentElement.scrollHeight;
-        if (h > lastHeight + 50) { stable = 0; lastHeight = h; }
-        else { stable++; if (stable >= STABLE_THRESHOLD) break; }
-        if (y > h + vh) break;
+      // Phase A: Find all scrollable containers (window + internal panels)
+      const scrollables = _findScrollableElements();
+      console.log("[adala] found scrollable elements:", scrollables.length);
+
+      // Phase B: Scroll each scrollable element thoroughly
+      for (const { el, isWindow } of scrollables) {
+        await _scrollElementThoroughly(el, isWindow);
       }
-      await sleep(300);
-      
-      // Phase 3: Scroll back to top
-      window.scrollTo({ top: 0, behavior: "instant" });
-      await sleep(200);
-      
-      // Phase 4: Scroll down again slowly to ensure all content rendered
-      lastHeight = -1; stable = 0;
-      for (let i = 0; i < MAX_STEPS; i++) {
-        const y = (i + 1) * step;
-        window.scrollTo({ top: y, behavior: "instant" });
-        await sleep(DELAY);
-        const h = document.documentElement.scrollHeight;
-        if (h > lastHeight + 50) { stable = 0; lastHeight = h; }
-        else { stable++; if (stable >= STABLE_THRESHOLD) break; }
-        if (y > h + vh) break;
-      }
-      await sleep(300);
-      
-      // Phase 5: Try to click "load more" buttons
+
+      // Phase C: Try to click "load more" buttons
       await tryLoadMore();
+      await sleep(400);
+
+      // Phase D: After load-more, re-scroll all containers again
+      const scrollables2 = _findScrollableElements();
+      for (const { el, isWindow } of scrollables2) {
+        await _scrollElementThoroughly(el, isWindow);
+      }
+
+      // Phase E: Final — scroll everything to top
+      for (const { el, isWindow } of scrollables2) {
+        if (isWindow) window.scrollTo({ top: 0, behavior: "instant" });
+        else el.scrollTo({ top: 0, behavior: "instant" });
+      }
       await sleep(300);
-      
-      // Phase 6: Final scroll to top
-      window.scrollTo({ top: 0, behavior: "instant" });
-      await sleep(200);
     } catch (e) { console.warn("[adala] scroll failed", e); }
   }
 
@@ -1618,107 +1670,164 @@
     return fields;
   }
 
+  // Normalize Arabic text for comparison: strip diacritics, normalize alef/ya, collapse whitespace
+  function _normalizeArabic(s) {
+    return (s || "")
+      .replace(/[\u064B-\u065F\u0670]/g, "")       // strip Arabic diacritics (tashkeel)
+      .replace(/[إأآا]/g, "ا")                       // normalize alef variants
+      .replace(/ى/g, "ي")                             // normalize alef maqsura to ya
+      .replace(/ة/g, "ه")                             // normalize ta marbuta to ha (loose)
+      .replace(/[^\u0600-\u06FFa-zA-Z0-9\s]/g, "")   // keep Arabic letters, Latin, digits, spaces
+      .replace(/\s+/g, " ")
+      .trim();
+  }
+
   async function clickSidebarTab(label) {
-    // Strategy 1: Look for elements with exact or partial text match in sidebar-like containers
-    // Najiz uses Angular components with specific class patterns
+    const normalizedLabel = _normalizeArabic(label);
+    console.log("[adala] clickSidebarTab looking for:", label, "normalized:", normalizedLabel);
+
+    // Strategy 1: Sidebar-specific containers (Najiz Angular sidebar)
     const sidebarSelectors = [
-      "[class*='sidebar']",
-      "[class*='side-bar']",
-      "[class*='sidenav']",
-      "[class*='side-nav']",
-      "[class*='menu']",
-      "[class*='nav-tabs']",
-      "[class*='tabset']",
-      "[class*='accordion']",
-      "[role='tablist']",
-      "[role='navigation']",
-      "nav",
-      "aside",
-      ".mat-tab-list",
-      ".nav",
-      ".tabs",
+      "[class*='sidebar']", "[class*='side-bar']", "[class*='sidenav']",
+      "[class*='side-nav']", "[class*='menu']", "[class*='nav-tabs']",
+      "[class*='tabset']", "[class*='accordion']", "[role='tablist']",
+      "[role='navigation']", "nav", "aside", ".mat-tab-list", ".nav", ".tabs",
+      "[class*='sticky']", "[class*='panel']", "[class*='detail-nav']",
+      "[class*='case-nav']", "[class*='section-nav']",
     ];
     
-    // First try to find a sidebar container, then look for clickable items within it
     for (const sidebarSel of sidebarSelectors) {
       const sidebars = $all(sidebarSel);
       for (const sidebar of sidebars) {
-        const items = $all("a, button, [role='tab'], li, [class*='item'], [class*='tab'], [class*='link'], span, div", sidebar);
+        // Scroll the sidebar itself into view and scroll through it
+        try { sidebar.scrollIntoView({ behavior: "instant", block: "nearest" }); } catch {}
+        await sleep(200);
+        
+        const items = $all("a, button, [role='tab'], li, [class*='item'], [class*='tab'], [class*='link'], span, div, mat-tab", sidebar);
         for (const item of items) {
-          const t = clean(item.textContent || item.innerText || "");
-          if (!t || t.length > 80) continue;
-          if (t.includes(label)) {
+          const rawText = clean(item.textContent || item.innerText || "");
+          const itemNormalized = _normalizeArabic(rawText);
+          if (!rawText || rawText.length > 80) continue;
+          // Match: exact text includes label, or normalized versions match
+          if (rawText.includes(label) || itemNormalized.includes(normalizedLabel) || 
+              itemNormalized === normalizedLabel || itemNormalized.startsWith(normalizedLabel)) {
             try {
-              // Scroll the item into view first
               item.scrollIntoView({ behavior: "instant", block: "center" });
-              await sleep(300);
+              await sleep(400);
+              // Try multiple click methods
               item.click();
-              await sleep(2000);
-              // After clicking, scroll the main content area to load all data
+              try { item.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true })); } catch {}
+              await sleep(500);
+              // Wait for Angular to render the new content panel
+              await sleep(2500);
+              // Scroll the newly revealed content area
               await autoScrollFull();
+              console.log("[adala] clicked sidebar tab:", rawText);
               return true;
-            } catch {}
+            } catch (e) { console.warn("[adala] sidebar click failed", e); }
           }
         }
       }
     }
     
-    // Strategy 2: Search the entire page for clickable elements with the label
-    // This is a fallback for when the sidebar doesn't have distinctive classes
-    const allClickable = $all("a, button, [role='tab'], [role='button'], li, [class*='tab'], [class*='nav-item'], [class*='menu-item'], [class*='sidebar'] *, [class*='side'] *");
+    // Strategy 2: Search the entire page for clickable elements
+    const allClickable = $all("a, button, [role='tab'], [role='button'], li, [class*='tab'], [class*='nav-item'], [class*='menu-item'], [class*='sidebar'] *, [class*='side'] *, [class*='sticky'] *, [class*='panel'] *");
     for (const el of allClickable) {
-      const t = clean(el.textContent || el.innerText || "");
-      if (!t || t.length > 60) continue;
-      if (t.includes(label)) {
-        // Verify this looks like a navigation element (not random text)
+      const rawText = clean(el.textContent || el.innerText || "");
+      const elNormalized = _normalizeArabic(rawText);
+      if (!rawText || rawText.length > 60) continue;
+      if (rawText.includes(label) || elNormalized.includes(normalizedLabel)) {
         const parent = el.parentElement;
-        const parentClass = (parent?.className || "").toLowerCase();
-        const isNavLike = /tab|nav|menu|side|list|item|link|btn|button|accordion/i.test(parentClass) ||
+        const parentClass = (parent?.className || "").toString().toLowerCase();
+        const isNavLike = /tab|nav|menu|side|list|item|link|btn|button|accordion|sticky|panel/i.test(parentClass) ||
                           parent?.getAttribute("role") === "tablist" ||
                           parent?.tagName === "NAV" ||
                           parent?.tagName === "ASIDE" ||
                           parent?.tagName === "UL";
-        if (isNavLike || t.length < 30) {
+        if (isNavLike || rawText.length < 30) {
           try {
             el.scrollIntoView({ behavior: "instant", block: "center" });
-            await sleep(300);
+            await sleep(400);
             el.click();
-            await sleep(2000);
+            try { el.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true })); } catch {}
+            await sleep(500);
+            await sleep(2500);
             await autoScrollFull();
+            console.log("[adala] clicked tab (global):", rawText);
             return true;
           } catch {}
         }
       }
     }
     
-    // Strategy 3: Last resort - look for any element with the exact label text
+    // Strategy 3: Last resort - any element with exact label
     const allElements = $all("*");
     for (const el of allElements) {
       if (el.children.length > 5) continue;
-      const t = clean(el.textContent || el.innerText || "");
-      if (t === label || t === label + ":" || t === label + " :") {
+      const rawText = clean(el.textContent || el.innerText || "");
+      const elNormalized = _normalizeArabic(rawText);
+      if (rawText === label || elNormalized === normalizedLabel ||
+          rawText === label + ":" || rawText === label + " :" ||
+          elNormalized === normalizedLabel + ":" || elNormalized === normalizedLabel + " :") {
         try {
           el.scrollIntoView({ behavior: "instant", block: "center" });
-          await sleep(300);
+          await sleep(400);
           el.click();
-          await sleep(2000);
+          try { el.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true })); } catch {}
+          await sleep(500);
+          await sleep(2500);
           await autoScrollFull();
+          console.log("[adala] clicked tab (last resort):", rawText);
           return true;
         } catch {}
       }
     }
     
+    console.warn("[adala] sidebar tab not found:", label);
     return false;
   }
 
   function scrapeSidebarContent(sectionLabel) {
     const result = { section: sectionLabel };
+    const normalizedLabel = _normalizeArabic(sectionLabel);
     
-    if (sectionLabel.includes("أطراف الدعوي") || sectionLabel.includes("أطراف الدعوى")) {
+    if (normalizedLabel.includes("اطراف الدعوي") || normalizedLabel.includes("اطراف الدعوى") || sectionLabel.includes("أطراف الدعوي") || sectionLabel.includes("أطراف الدعوى")) {
       const plaintiffs = [];
       const defendants = [];
+      
+      // Strategy 1: Look for named sub-sections (قائمة المدعين / قائمة المدعي عليهم)
+      const allSections = $all("div, section, [class*='section'], [class*='panel'], [class*='card'], [class*='block']");
+      for (const section of allSections) {
+        const sectionTitle = clean(section.querySelector("h1, h2, h3, h4, h5, h6, [class*='title'], [class*='header'], [class*='label'], label")?.textContent || "");
+        const sectionNormalized = _normalizeArabic(sectionTitle);
+        const isPlaintiffSection = /قائمة\s*المدعين|المدعين|plaintiff/i.test(sectionTitle) || /قائمة\s*المدعين/.test(sectionNormalized);
+        const isDefendantSection = /قائمة\s*المدعي\s*عليهم|المدعي\s*عليهم|defendant/i.test(sectionTitle) || /قائمة\s*المدعي\s*عليهم/.test(sectionNormalized);
+        
+        if (isPlaintiffSection || isDefendantSection) {
+          // Extract all party entries within this sub-section
+          const items = $all("[class*='item'], [class*='row'], tr, li, [class*='card'], [class*='entry'], [class*='party'], [class*='خصم'], [class*='طرف']", section);
+          const targets = items.length > 0 ? items : [section];
+          for (const item of targets) {
+            const t = clean(item.innerText || "");
+            if (!t || t.length < 3 || t.length > 800) continue;
+            const party = _extractPartyFromTextBlock(t);
+            if (party.name || party.id_number) {
+              party.party_role = isDefendantSection ? "defendant" : "plaintiff";
+              const exists = [...plaintiffs, ...defendants].some(p => p.name === party.name && p.id_number === party.id_number);
+              if (!exists) {
+                if (isDefendantSection) defendants.push(party);
+                else plaintiffs.push(party);
+              }
+            }
+          }
+        }
+      }
+      
+      // Strategy 2: Table-based extraction
       $all("table").forEach((table) => {
         const headers = $all("thead th, thead td, tr:first-child th, tr:first-child td", table).map(text);
+        const hasPartyHeader = headers.some((h) => /الاسم|الصفة|المدعي|المدعي\s*عليه|الهوية|الجنسية/.test(h));
+        if (!hasPartyHeader) return;
         const rows = $all("tbody tr", table).length ? $all("tbody tr", table) : $all("tr", table);
         rows.forEach((row, i) => {
           if (i === 0 && $all("th", row).length && !$all("td", row).length) return;
@@ -1736,11 +1845,20 @@
           });
           if (party.name || party.id_number) {
             const rowText = cells.join(" ");
-            if (/مدعي\s*عليه|مدعى\s*عليه/.test(rowText)) defendants.push(party);
-            else plaintiffs.push(party);
+            if (/مدعي\s*عليه|مدعى\s*عليه/.test(rowText)) {
+              party.party_role = "defendant";
+              const exists = defendants.some(p => p.name === party.name);
+              if (!exists) defendants.push(party);
+            } else {
+              party.party_role = "plaintiff";
+              const exists = plaintiffs.some(p => p.name === party.name);
+              if (!exists) plaintiffs.push(party);
+            }
           }
         });
       });
+      
+      // Strategy 3: Text-based extraction from entire page
       if (plaintiffs.length === 0 && defendants.length === 0) {
         const allParties = scrapeCaseParties();
         for (const p of allParties) {
@@ -1748,28 +1866,74 @@
           else plaintiffs.push(p);
         }
       }
+      
+      // Strategy 4: Deep scan for party-like blocks
+      if (plaintiffs.length === 0 && defendants.length === 0) {
+        const pageText = document.body.innerText || "";
+        // Look for patterns like "الاسم: XXX الجنسية: YYY"
+        const nameRegex = /(?:الاسم|اسم)\s*[:\-]\s*([^\n|،]{2,80})/g;
+        let match;
+        while ((match = nameRegex.exec(pageText)) !== null) {
+          const blockStart = Math.max(0, match.index - 200);
+          const blockEnd = Math.min(pageText.length, match.index + 400);
+          const block = pageText.substring(blockStart, blockEnd);
+          const party = _extractPartyFromTextBlock(block);
+          if (party.name) {
+            const isDefendant = /مدعي\s*عليه|مدعى\s*عليه/.test(block);
+            party.party_role = isDefendant ? "defendant" : "plaintiff";
+            const exists = [...plaintiffs, ...defendants].some(p => p.name === party.name);
+            if (!exists) {
+              if (isDefendant) defendants.push(party);
+              else plaintiffs.push(party);
+            }
+          }
+        }
+      }
+      
       result.plaintiffs = plaintiffs;
       result.defendants = defendants;
+      console.log("[adala] parties scraped:", plaintiffs.length, "plaintiffs,", defendants.length, "defendants");
       return result;
     }
     
-    if (sectionLabel.includes("الجلسات")) {
+    if (normalizedLabel.includes("الجلسات")) {
       result.sessions = scrapeCaseSessionsDetail();
+      console.log("[adala] sessions scraped:", result.sessions.length);
       return result;
     }
     
-    if (sectionLabel.includes("الأحكام") || sectionLabel.includes("الاحكام")) {
+    if (normalizedLabel.includes("الاحكام") || normalizedLabel.includes("الأحكام")) {
       result.judgments = scrapeCaseJudgments();
+      console.log("[adala] judgments scraped:", result.judgments.length);
       return result;
     }
     
-    if (sectionLabel.includes("الطلبات")) {
+    if (normalizedLabel.includes("الطلبات")) {
       result.requests = scrapeLawsuitRequests();
+      console.log("[adala] requests scraped:", result.requests.length);
       return result;
     }
     
     result.fields = scrapeDetailPage();
     return result;
+  }
+
+  // Helper: extract party data from a text block
+  function _extractPartyFromTextBlock(t) {
+    const party = {};
+    const nameMatch = t.match(/(?:الاسم|اسم)\s*[:\-]?\s*([^\n|،]{2,80})/);
+    if (nameMatch) party.name = clean(nameMatch[1]);
+    const natMatch = t.match(/(?:الجنسية|جنسية)\s*[:\-]?\s*([^\n|،]{2,40})/);
+    if (natMatch) party.nationality = clean(natMatch[1]);
+    const idTypeMatch = t.match(/(?:نوع\s*(?:الهوية|التعريف|الوثيقة))\s*[:\-]?\s*([^\n|،]{2,40})/);
+    if (idTypeMatch) party.id_type = clean(idTypeMatch[1]);
+    const idNumMatch = t.match(/(?:رقم\s*(?:الهوية|التعريف|السجل))\s*[:\-]?\s*(\d{6,15})/);
+    if (idNumMatch) party.id_number = clean(idNumMatch[1]);
+    const capMatch = t.match(/(?:الصفة\s*(?:في\s*الدعوى|القانونية)?|صفة)\s*[:\-]?\s*([^\n|،]{2,40})/);
+    if (capMatch) party.capacity = clean(capMatch[1]);
+    const poaMatch = t.match(/(?:الوكالة|حالة\s*الوكالة)\s*[:\-]?\s*([^\n|،]{2,40})/);
+    if (poaMatch) party.poa_status = clean(poaMatch[1]);
+    return party;
   }
 
   // =====================================================
@@ -2028,7 +2192,7 @@
     const menu = document.createElement("div");
     menu.id = "adala-najiz-menu";
     menu.innerHTML = `
-      <div class="ad-title">⚖️ منصة العدالة — مزامنة ناجز v4.6</div>
+      <div class="ad-title">⚖️ منصة العدالة — مزامنة ناجز v5.0</div>
       <button class="ad-primary" id="ad-bot" style="background:linear-gradient(135deg,#16a34a,#065f46);color:#fff;border:1.5px solid #10b981;margin-bottom:6px">🚀 تشغيل البوت (سحب كل الصفحات)</button>
       <button class="ad-primary" data-k="">مزامنة الصفحة الحالية فقط</button>
       <div class="ad-grid">
@@ -2105,5 +2269,5 @@
     return false;
   });
 
-  console.log("[منصة العدالة v4.6] واجهة موحّدة + أحكام context-aware — نوع الصفحة:", detectKindFromUrl());
+  console.log("[منصة العدالة v5.0] محسّن — تمرير شامل + سحب معمق للأطراف/الجلسات/الأحكام — نوع الصفحة:", detectKindFromUrl());
 })();
