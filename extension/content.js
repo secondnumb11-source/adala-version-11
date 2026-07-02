@@ -1162,24 +1162,61 @@
     return undefined;
   }
 
+  // Helper: extract long text field (subject matter, requests, foundations)
+  // These fields can span multiple paragraphs, so we need special handling
+  function _extractLongTextField(label) {
+    const pageText = document.body.innerText || "";
+    
+    // Strategy 1: Find the label and extract everything until the next major section
+    const labelRegex = new RegExp(label + "\\s*[:\\-]?\\s*", "i");
+    const match = pageText.match(labelRegex);
+    if (!match) return undefined;
+    
+    const startIndex = match.index + match[0].length;
+    const remainingText = pageText.substring(startIndex);
+    
+    // Look for the next major section header to know where this field ends
+    const nextSectionMatch = remainingText.match(/\n\s*(طلبات المدعي|أسانيد الدعوي|أطراف الدعوي|الجلسات|الأحكام|الطلبات|المرفقات)/i);
+    const endIndex = nextSectionMatch ? nextSectionMatch.index : Math.min(remainingText.length, 5000);
+    
+    const text = remainingText.substring(0, endIndex).trim();
+    
+    // Clean up: remove excessive whitespace but preserve paragraph breaks
+    return text.replace(/\n{3,}/g, "\n\n").replace(/[ \t]+/g, " ").trim();
+  }
+
   function scrapeCaseDetailFields() {
     const fields = {};
     const pageText = document.body.innerText || "";
 
-    // Extract case number from URL or page
+    // Extract case number from URL or page - try multiple patterns
     fields.case_number = _findValueByLabel(["رقم القضية", "رقم الدعوى", "رقم الملف"]) ||
       (pageText.match(/(\d{4}\s*\/\s*\d{3,})/) || [])[1]?.replace(/\s/g, "") ||
+      (pageText.match(/(\d{10,})/) || [])[1] ||
       (location.pathname.match(/(\d{4,})/) || [])[1];
 
-    // Extract basic fields using multiple strategies
-    fields.case_classification = _findValueByLabel(["تصنيف القضية", "التصنيف"]);
-    fields.case_type_detail = _findValueByLabel(["نوع القضية", "نوع الدعوى"]);
-    fields.case_date = _findValueByLabel(["تاريخ القضية", "تاريخ الدعوى", "تاريخ القيد", "تاريخ الإيداع"]);
-    fields.subject_matter = _findValueByLabel(["موضوع الدعوي", "موضوع الدعوى", "موضوع القضية"]);
-    fields.plaintiff_requests = _findValueByLabel(["طلبات المدعي", "طلبات المدّعي"]);
-    fields.case_foundations = _findValueByLabel(["أسانيد الدعوي", "أسانيد الدعوى", "أسس الدعوى"]);
-    fields.court_name = _findValueByLabel(["اسم المحكمة", "المحكمة"]);
-    fields.circuit_number = _findValueByLabel(["الدائرة", "رقم الدائرة"]);
+    // Extract basic fields using multiple strategies - be more aggressive
+    fields.case_classification = _findValueByLabel(["تصنيف القضية", "التصنيف", "تصنيف"]) ||
+      (pageText.match(/تصنيف\s*القضية\s*[:\-]?\s*([^\n]{2,60})/) || [])[1]?.trim();
+    fields.case_type_detail = _findValueByLabel(["نوع القضية", "نوع الدعوى", "النوع"]) ||
+      (pageText.match(/نوع\s*القضية\s*[:\-]?\s*([^\n]{2,100})/) || [])[1]?.trim();
+    fields.case_date = _findValueByLabel(["تاريخ القضية", "تاريخ الدعوى", "تاريخ القيد", "تاريخ الإيداع", "التاريخ"]) ||
+      (pageText.match(/تاريخ\s*القضية\s*[:\-]?\s*([^\n]{2,60})/) || [])[1]?.trim();
+    
+    // Extract long text fields more aggressively
+    fields.subject_matter = _findValueByLabel(["موضوع الدعوي", "موضوع الدعوى", "موضوع القضية", "موضوع"]) ||
+      _extractLongTextField("موضوع الدعوي") ||
+      _extractLongTextField("موضوع الدعوى");
+    fields.plaintiff_requests = _findValueByLabel(["طلبات المدعي", "طلبات المدّعي", "الطلبات"]) ||
+      _extractLongTextField("طلبات المدعي");
+    fields.case_foundations = _findValueByLabel(["أسانيد الدعوي", "أسانيد الدعوى", "أسس الدعوى", "الأسانيد"]) ||
+      _extractLongTextField("أسانيد الدعوي") ||
+      _extractLongTextField("أسانيد الدعوى");
+    
+    fields.court_name = _findValueByLabel(["اسم المحكمة", "المحكمة"]) ||
+      (pageText.match(/المحكمة\s*[:\-]?\s*([^\n]{2,100})/) || [])[1]?.trim();
+    fields.circuit_number = _findValueByLabel(["الدائرة", "رقم الدائرة"]) ||
+      (pageText.match(/الدائرة\s*[:\-]?\s*([^\n]{2,50})/) || [])[1]?.trim();
 
     // Strategy 1: dt/dd pairs
     $all("dt").forEach((dt) => {

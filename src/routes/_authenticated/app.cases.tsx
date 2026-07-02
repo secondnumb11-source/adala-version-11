@@ -59,9 +59,10 @@ function CasesPage() {
   const { data: lawsuitRequests = [] } = useList<any>("lawsuit_requests");
   const upsert = useUpsert("cases");
   const del = useDelete("cases");
-  const [view, setView] = useState<"grid" | "list">("list");
+  const [view, setView] = useState<"grid" | "list">("grid");
   const [selectedCase, setSelectedCase] = useState<any | null>(null);
   const [searchQuery, setSearchQuery] = useState("");
+  const [showTestData, setShowTestData] = useState(false);
 
   // Listen for refresh events (e.g. after document upload or sync)
   useEffect(() => {
@@ -173,6 +174,15 @@ function CasesPage() {
       <PageHeader icon={Briefcase} title="إدارة القضايا" subtitle={`${cases.length} قضية`}
         action={
           <div className="flex gap-2 items-center">
+            {/* Test Data Button */}
+            <Button 
+              size="sm" 
+              variant="outline"
+              onClick={handleTestWithDummyData}
+              className="h-9 px-3 text-xs border-blue-300 text-blue-700 hover:bg-blue-50"
+            >
+              اختبار ببيانات وهمية
+            </Button>
             {/* Search */}
             <div className="relative">
               <Input
@@ -385,7 +395,118 @@ function CasesPage() {
               // Determine user's role in the case
               const userRole = plaintiffs.length > 0 ? "المدعي" : defendants.length > 0 ? "المدعى عليه" : "—";
 
-              return (
+  const handleTestWithDummyData = async () => {
+    const { data: { user } } = await supabase.auth.getUser();
+    if (!user) return toast.error("غير مسجل دخول");
+    
+    try {
+      // Create test case
+      const testCase = {
+        owner_id: user.id,
+        case_number: "1445/12345",
+        title: "قضية اختبار - مطالبة مالية",
+        court: "المحكمة العامة بالرياض",
+        case_type: "civil",
+        status: "open",
+        opened_at: "2024-01-15",
+        plaintiff_name: "أحمد محمد العلي",
+        defendant_name: "شركة التقنية المتقدمة",
+        najiz_id: "case_1445_12345",
+      };
+      
+      const { data: insertedCase, error: caseError } = await supabase
+        .from("cases")
+        .insert(testCase)
+        .select()
+        .single();
+      
+      if (caseError) throw caseError;
+      
+      // Create test case details
+      const testDetails = {
+        owner_id: user.id,
+        case_id: insertedCase.id,
+        case_number: insertedCase.case_number,
+        case_classification: "مدني",
+        case_type_detail: "مطالبة مالية",
+        case_date: "2024-01-15",
+        subject_matter: "يقوم المدعي بمطالبة المدعى عليه بمبلغ 50,000 ريال سعودي عن أضرار ناتجة عن breach of contract. تم توقيع العقد في تاريخ 2023-06-01 ولم يقم المدعى عليه بتنفيذ التزاماته.",
+        plaintiff_requests: "يلتزم المدعى عليه بدفع مبلغ 50,000 ريال سعودي كتعويض عن الأضرار المادية والمعنوية.",
+        case_foundations: "1. وجود عقد موقع بين الطرفين\n2. عدم تنفيذ المدعى عليه لالتزاماته\n3. الأضرار المادية المتمثلة في الخسائر المالية\n4. الأضرار المعنوية الناتجة عن الإخلال بالعقد",
+        court_name: "المحكمة العامة بالرياض",
+        circuit_number: "الدائرة 15",
+      };
+      
+      await supabase.from("case_details").insert(testDetails);
+      
+      // Create test parties
+      await supabase.from("case_parties").insert([
+        {
+          owner_id: user.id,
+          case_id: insertedCase.id,
+          case_number: insertedCase.case_number,
+          party_type: "plaintiff",
+          party_name: "أحمد محمد العلي",
+          party_nationality: "سعودي",
+          party_identity_type: "هوية وطنية",
+          party_id_number: "1234567890",
+          party_capacity: "مدعي",
+        },
+        {
+          owner_id: user.id,
+          case_id: insertedCase.id,
+          case_number: insertedCase.case_number,
+          party_type: "defendant",
+          party_name: "شركة التقنية المتقدمة",
+          party_nationality: "سعودي",
+          party_identity_type: "سجل تجاري",
+          party_id_number: "1010123456",
+          party_capacity: "مدعى عليه",
+        },
+      ]);
+      
+      // Create test sessions
+      await supabase.from("case_sessions_detail").insert([
+        {
+          owner_id: user.id,
+          case_id: insertedCase.id,
+          case_number: insertedCase.case_number,
+          session_status: "مجدولة",
+          court_name: "المحكمة العامة بالرياض",
+          circuit_number: "الدائرة 15",
+          mechanism: "حضوري",
+          degree: "أولى",
+          session_date: "2024-02-20",
+          session_time: "10:00",
+          session_details: "جلسة استماع أولية",
+        },
+      ]);
+      
+      // Create test judgments
+      await supabase.from("case_judgments").insert([
+        {
+          owner_id: user.id,
+          case_id: insertedCase.id,
+          case_number: insertedCase.case_number,
+          judgment_finality: "ابتدائي",
+          deed_number: "صك-12345",
+          deed_date: "2024-03-01",
+          court_name: "المحكمة العامة بالرياض",
+          circuit_number: "الدائرة 15",
+          degree: "أولى",
+          judgment_details: "حكم ابتدائي لصالح المدعي بمبلغ 50,000 ريال",
+        },
+      ]);
+      
+      toast.success("تم إنشاء بيانات اختبار بنجاح!");
+      queryClient.invalidateQueries();
+    } catch (error: any) {
+      console.error("Test data error:", error);
+      toast.error("فشل إنشاء بيانات الاختبار: " + error.message);
+    }
+  };
+
+  return (
                 <div
                   key={c.id}
                   className="grid grid-cols-[1fr_1fr_1fr_1fr_1.2fr_1.2fr_1fr_0.5fr] gap-2 px-4 py-3 items-center hover:bg-[#faf9f6] transition-colors cursor-pointer group"
